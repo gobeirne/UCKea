@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UC Kea Sound Player</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" sizes="192x192" />
+  <meta name="theme-color" content="#000000" />
+</head>
+<body>
+  <div class="container">
+    <div class="header-bar">
+      <img src="UClogo.png" alt="University of Canterbury logo" class="uc-logo" />
+      <h1 id="app-title">UC Kea Sound Player</h1>
+    </div>
+    <p class="attribution">G.O'B. 23/4/2026</p>
+
+    <div class="mode-toggle">
+      <button id="btn-dba" onclick="setMode('dBA')">dB A</button>
+      <button id="btn-dbkea" onclick="setMode('dBKea')">dB Kea</button>
+    </div>
+
+    <button id="calibrate-btn" class="calibrate" onclick="toggleCalibration()">Calibration</button>
+
+    <div class="controls">
+      <label for="volume">Output Level</label>
+      <div class="slider-label-group">
+        <input type="range" id="volume" />
+        <span id="dB-label">0 dB FS</span>
+      </div>
+      <span id="mode-badge">Uncalibrated Mode</span>
+    </div>
+
+    <div id="buttons-container"></div>
+
+    <div class="log-section">
+      <h2>Session Log</h2>
+      <pre id="log-output"></pre>
+      <div class="log-actions">
+        <button class="log-btn" onclick="copyLog()">Copy Log</button>
+        <button class="log-btn" onclick="downloadLog()">Download Log</button>
+        <button class="log-btn" onclick="emailLog()">Email Log</button>
+        <button class="log-btn log-btn-clear" onclick="clearLog()">Clear Log</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js")
+        .then(() => console.log("Service Worker registered"))
+        .catch(err => console.error("Service Worker registration failed", err));
+    }
+  </script>
+</body>
+</html>
