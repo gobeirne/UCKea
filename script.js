@@ -27,13 +27,17 @@ let sessionStartTime = "";
 // ── Local time formatting ──────────────────────────────
 function localDateTime(date) {
   if (!date) date = new Date();
-  // e.g. "23/04/2026, 10:44:43 AM NZST"
-  const dt = date.toLocaleString("en-NZ", {
-    dateStyle: "short",
-    timeStyle: "medium",
-    timeZoneName: "short"
+  // Format date and time separately, then get timezone name
+  const datePart = date.toLocaleDateString("en-NZ", {
+    day: "numeric", month: "numeric", year: "numeric"
   });
-  return dt;
+  const timePart = date.toLocaleTimeString("en-NZ", {
+    hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true
+  });
+  // Get timezone abbreviation
+  const tzPart = date.toLocaleString("en-NZ", { timeZoneName: "short" })
+    .split(" ").pop();
+  return `${datePart}, ${timePart} ${tzPart}`;
 }
 
 function localDateOnly(date) {
