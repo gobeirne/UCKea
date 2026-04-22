@@ -8,7 +8,7 @@ const FILES_TO_CACHE = [
   "./script.js",
   "./manifest.json",
   "./UClogo.png",
-  "./sounds/correction_factors.csv",
+  "./correction_factors.csv",
   "./sounds/calib.wav",
   "./sounds/0000_2_AP_-5.4dB.wav",
   "./sounds/0005_AP_+0.4dB.wav",
