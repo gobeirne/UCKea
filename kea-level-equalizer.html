@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kea Call Level Equalizer — dB(A) & dB(Kea)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap');
+
+  :root {
+    --bg: #0c1014;
+    --surface: #141a20;
+    --surface2: #1a2229;
+    --border: #263040;
+    --text: #e0e8f0;
+    --text-dim: #7a8fa3;
+    --kea-green: #4ecb71;
+    --kea-green-dim: #2a6e3d;
+    --human-orange: #e8944a;
+    --human-orange-dim: #7a4d28;
+    --accent: #5ba4e6;
+    --danger: #e85a5a;
+    --gold: #e8c94a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .header {
+    padding: 28px 32px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-end;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .header h1 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 28px;
+    font-weight: 400;
+    letter-spacing: -0.5px;
+    color: var(--kea-green);
+  }
+
+  .header h1 span { color: var(--text-dim); }
+
+  .header .subtitle {
+    color: var(--text-dim);
+    font-size: 11px;
+    padding-bottom: 4px;
+  }
+
+  .controls-bar {
+    padding: 12px 32px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .control-group label {
+    color: var(--text-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .toggle-bar {
+    display: flex;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  .toggle-bar button {
+    padding: 5px 12px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .toggle-bar button.active {
+    background: var(--kea-green-dim);
+    color: var(--kea-green);
+  }
+
+  .toggle-bar button[data-mode="A"].active {
+    background: var(--human-orange-dim);
+    color: var(--human-orange);
+  }
+
+  .toggle-bar button[data-mode="MAF"].active {
+    background: rgba(91, 164, 230, 0.2);
+    color: var(--accent);
+  }
+
+  .small-input {
+    width: 56px;
+    padding: 4px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    text-align: right;
+  }
+
+  .small-input:focus { border-color: var(--accent); outline: none; }
+
+  select.ctrl-select {
+    padding: 5px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    appearance: auto;
+  }
+
+  select.ctrl-select:focus { border-color: var(--accent); outline: none; }
+
+  button.primary {
+    padding: 5px 14px;
+    background: var(--kea-green-dim);
+    color: var(--kea-green);
+    border: 1px solid var(--kea-green);
+    border-radius: 4px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  button.primary:hover { background: var(--kea-green); color: var(--bg); }
+
+  button.secondary {
+    padding: 5px 14px;
+    background: var(--surface2);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  button.secondary:hover { background: var(--border); color: var(--text); }
+
+  button.apply-btn {
+    padding: 5px 14px;
+    background: rgba(88, 166, 230, 0.15);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  button.apply-btn:hover { background: var(--accent); color: var(--bg); }
+
+  .main-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    min-height: calc(100vh - 130px);
+  }
+
+  .results-panel {
+    padding: 16px 24px;
+    overflow-y: auto;
+  }
+
+  .sidebar {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+    font-size: 11px;
+  }
+
+  .section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .audiogram-container {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 16px;
+  }
+
+  .audiogram-container canvas { width: 100%; height: 160px; }
+
+  .file-list { display: flex; flex-direction: column; gap: 3px; }
+
+  .file-row {
+    display: grid;
+    grid-template-columns: 26px 1fr 52px 62px 62px 62px 62px;
+    align-items: center;
+    padding: 5px 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    gap: 6px;
+    transition: border-color 0.2s;
+    font-size: 11px;
+  }
+
+  .file-row:hover { border-color: var(--accent); }
+
+  .file-row .index { color: var(--text-dim); font-size: 10px; text-align: center; }
+  .file-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-row .metric { text-align: right; font-variant-numeric: tabular-nums; }
+  .file-row .metric.dim { color: var(--text-dim); }
+  .file-row .metric.src { color: var(--accent); font-weight: 500; }
+  .file-row .metric.nosrc { color: var(--text-dim); }
+  .file-row .metric.gain-col { color: var(--gold); }
+
+  .file-header {
+    display: grid;
+    grid-template-columns: 26px 1fr 52px 62px 62px 62px 62px;
+    padding: 3px 8px;
+    gap: 6px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+  }
+
+  .file-header span:nth-child(n+3) { text-align: right; }
+
+  .summary-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    font-size: 11px;
+  }
+
+  .summary-row .label { color: var(--text-dim); }
+  .summary-row .value { font-variant-numeric: tabular-nums; }
+  .summary-row .value.green { color: var(--kea-green); }
+  .summary-row .value.orange { color: var(--human-orange); }
+
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 60px 32px;
+    text-align: center;
+    margin: 40px 32px;
+    transition: all 0.2s;
+    grid-column: 1 / -1;
+  }
+
+  .drop-zone.dragover {
+    border-color: var(--kea-green);
+    background: rgba(78, 203, 113, 0.05);
+  }
+
+  .drop-zone h2 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 22px;
+    font-weight: 400;
+    margin-bottom: 8px;
+  }
+
+  .drop-zone p { color: var(--text-dim); font-size: 12px; }
+
+  .progress-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 12px;
+  }
+
+  .progress-bar .fill {
+    height: 100%;
+    background: var(--kea-green);
+    transition: width 0.3s;
+    border-radius: 2px;
+  }
+
+  .legend { display: flex; gap: 14px; margin-bottom: 6px; font-size: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  .info-text {
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    margin-bottom: 10px;
+  }
+
+  .info-text strong { color: var(--text); }
+
+  .apply-progress {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--accent);
+  }
+
+  @media (max-width: 900px) {
+    .main-layout { grid-template-columns: 1fr; }
+    .sidebar { border-left: none; border-top: 1px solid var(--border); }
+  }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+
+<div class="header">
+  <h1>Kea Level Equalizer <span>v2.0</span></h1>
+  <div class="subtitle">Weighted momentary level measurement with gain normalization & WAV export. <small>G.O'B. 2026</small></div>
+</div>
+
+<div class="controls-bar">
+  <div class="control-group">
+    <label>Weighting</label>
+    <div class="toggle-bar" id="weightToggle">
+      <button data-mode="A" class="active" onclick="setWeighting('A')">dB(A)</button>
+      <button data-mode="MAF" onclick="setWeighting('MAF')">dB(MAF)</button>
+      <button data-mode="Kea" onclick="setWeighting('Kea')">dB(Kea)</button>
+    </div>
+  </div>
+  <div class="control-group">
+    <label>Window</label>
+    <input type="number" class="small-input" id="windowInput" value="400" min="10" max="2000" step="10">
+    <label style="text-transform:none;">ms</label>
+  </div>
+  <div class="control-group">
+    <label>Gain from</label>
+    <select class="ctrl-select" id="gainSource" onchange="onGainSourceChange()">
+      <option value="momentary" selected>Momentary (max)</option>
+      <option value="p90">90th percentile</option>
+      <option value="gatedMean">Gated mean</option>
+      <option value="mean">Mean (ungated)</option>
+      <option value="peak">Peak (dBFS)</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label>Gate</label>
+    <input type="number" class="small-input" id="gateInput" value="-20" min="-60" max="0" step="1">
+    <label style="text-transform:none;">dB re max</label>
+  </div>
+  <div class="control-group">
+    <label>±1s Pad</label>
+    <div class="toggle-bar" id="padToggle">
+      <button data-pad="0" class="active" onclick="setPadSilence(false)">Off</button>
+      <button data-pad="1" onclick="setPadSilence(true)">On</button>
+    </div>
+  </div>
+  <div class="control-group">
+    <label>Target</label>
+    <span id="targetDisplay" style="color:var(--accent); font-size:12px;">— dB</span>
+  </div>
+  <div class="control-group" style="margin-left:auto;">
+    <button class="primary" onclick="document.getElementById('fileInput').click()">Load Files</button>
+    <input type="file" id="fileInput" multiple accept="audio/*" style="display:none" onchange="handleFiles(this.files)">
+    <button class="secondary" id="exportBtn" onclick="copyTSV()" style="display:none">Copy TSV</button>
+    <button class="apply-btn" id="applyBtn" onclick="applyGains(false)" style="display:none">Save WAVs</button>
+    <button class="apply-btn" id="applyZipBtn" onclick="applyGains(true)" style="display:none">Save ZIP</button>
+  </div>
+</div>
+
+<div class="main-layout" id="mainLayout">
+  <div class="drop-zone" id="dropZone">
+    <h2>Drop your kea call recordings here</h2>
+    <p>WAV, FLAC, MP3, OGG — any format the Web Audio API supports</p>
+    <p style="margin-top:8px; color:var(--kea-green);">or click "Load Files" above</p>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// A-WEIGHTING CURVE (IEC 61672:2003)
+// ============================================================
+function aWeight(f) {
+  const f2 = f * f, f4 = f2 * f2;
+  const num = 12194 * 12194 * f4;
+  const den = (f2 + 20.6 * 20.6)
+            * Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9))
+            * (f2 + 12194 * 12194);
+  return 20 * Math.log10(num / den) + 2.0;
+}
+
+// ============================================================
+// KEA AUDIOGRAM (Schwing et al. 2016, JASA 140(5):3739-3744)
+// ============================================================
+const KEA_AUDIOGRAM_POINTS = [
+  [50,72],[100,60],[200,46],[250,40],[500,28],[750,18],
+  [1000,12],[1500,8],[2000,6],[2500,5],[3000,5],[4000,7],
+  [5000,10],[6000,20],[7000,30],[8000,38],[9000,43],[10000,48],
+  [11000,46],[12000,40],[13000,50],[14000,60],[15000,72],
+];
+const KEA_BEST = Math.min(...KEA_AUDIOGRAM_POINTS.map(p => p[1]));
+
+function keaWeight(f) {
+  const pts = KEA_AUDIOGRAM_POINTS;
+  if (f <= pts[0][0]) return -(pts[0][1] - KEA_BEST);
+  if (f >= pts[pts.length-1][0]) return -(pts[pts.length-1][1] - KEA_BEST);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [f0,t0] = pts[i], [f1,t1] = pts[i+1];
+    if (f >= f0 && f <= f1) {
+      const t = t0 + Math.log(f/f0) / Math.log(f1/f0) * (t1 - t0);
+      return -(t - KEA_BEST);
+    }
+  }
+  return 0;
+}
+
+// ============================================================
+// MINIMAL AUDIBLE FIELD (Terhardt 1979 approximation)
+// Threshold in dB SPL as a function of frequency
+// T(f) = 3.64*(f/1000)^-0.8 - 6.5*exp(-0.6*(f/1000-3.3)^2) + 0.001*(f/1000)^4
+// ============================================================
+function mafThreshold(f) {
+  const fk = f / 1000;
+  return 3.64 * Math.pow(fk, -0.8)
+       - 6.5 * Math.exp(-0.6 * Math.pow(fk - 3.3, 2))
+       + 0.001 * Math.pow(fk, 4);
+}
+
+// Best MAF sensitivity (minimum threshold, ~3.3–4 kHz)
+// Precompute by scanning
+const MAF_BEST = (() => {
+  let best = Infinity;
+  for (let f = 200; f <= 15000; f += 10) {
+    const t = mafThreshold(f);
+    if (t < best) best = t;
+  }
+  return best;
+})();
+
+function mafWeight(f) {
+  // Invert threshold relative to best, same logic as kea weighting
+  if (f < 20) return -(mafThreshold(20) - MAF_BEST);
+  if (f > 20000) return -(mafThreshold(20000) - MAF_BEST);
+  return -(mafThreshold(f) - MAF_BEST);
+}
+
+// ============================================================
+// APP STATE
+// ============================================================
+let currentWeighting = 'A';
+let padSilence = false;
+let gainSource = 'momentary';
+let gateThresholdDB = -20; // activity gate: dB relative to peak window
+let windowMs = 400;
+let audioFiles = [];
+let globalTarget = null;
+let audioCtx = null;
+
+function getAudioContext() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function setWeighting(mode) {
+  currentWeighting = mode;
+  document.querySelectorAll('#weightToggle button').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === mode));
+  if (audioFiles.length > 0) recompute();
+}
+
+function setPadSilence(on) {
+  padSilence = on;
+  document.querySelectorAll('#padToggle button').forEach(b =>
+    b.classList.toggle('active', (b.dataset.pad === '1') === on));
+  if (audioFiles.length > 0) recompute();
+}
+
+function onGainSourceChange() {
+  gainSource = document.getElementById('gainSource').value;
+  if (audioFiles.length > 0) recalcGains();
+}
+
+function recalcGains() {
+  const keyMap = {
+    momentary: 'momentaryLevel',
+    mean: 'meanMomentary',
+    p90: 'p90Level',
+    gatedMean: 'gatedMeanLevel',
+    peak: 'peakDB'
+  };
+  const key = keyMap[gainSource] || 'momentaryLevel';
+  globalTarget = audioFiles.reduce((s, f) => s + f[key], 0) / audioFiles.length;
+  for (const f of audioFiles) f.gain = globalTarget - f[key];
+  renderUI();
+}
+
+function preventClipping(reductionDB) {
+  // Shift target and all gains uniformly so worst-case file just touches 0 dBFS
+  globalTarget += reductionDB;
+  for (const f of audioFiles) f.gain += reductionDB;
+  renderUI();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('windowInput').addEventListener('change', e => {
+    const v = parseInt(e.target.value);
+    if (v >= 10 && v <= 2000) { windowMs = v; if (audioFiles.length > 0) recompute(); }
+  });
+  document.getElementById('gateInput').addEventListener('change', e => {
+    const v = parseInt(e.target.value);
+    if (v >= -60 && v <= 0) { gateThresholdDB = v; if (audioFiles.length > 0) recompute(); }
+  });
+});
+
+// ============================================================
+// MEASUREMENT
+// ============================================================
+function measureLevel(audioBuffer, weightFn) {
+  const sr = audioBuffer.sampleRate;
+  const nCh = audioBuffer.numberOfChannels;
+  const len = audioBuffer.length;
+
+  // Mix to mono
+  const raw = new Float32Array(len);
+  for (let ch = 0; ch < nCh; ch++) {
+    const d = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < len; i++) raw[i] += d[i] / nCh;
+  }
+
+  // Optional silence padding
+  let mono;
+  if (padSilence) {
+    const p = sr;
+    mono = new Float32Array(len + 2 * p);
+    mono.set(raw, p);
+  } else {
+    mono = raw;
+  }
+  const mLen = mono.length;
+  const duration = mLen / sr;
+
+  // Apply weighting via FFT
+  const fftN = nextPow2(mLen);
+  const re = new Float64Array(fftN);
+  const im = new Float64Array(fftN);
+  for (let i = 0; i < mLen; i++) re[i] = mono[i];
+
+  fftInPlace(re, im, false);
+
+  const binW = sr / fftN;
+  for (let k = 0; k <= fftN / 2; k++) {
+    const g = Math.pow(10, weightFn(k * binW) / 20);
+    re[k] *= g; im[k] *= g;
+    if (k > 0 && k < fftN / 2) { re[fftN-k] *= g; im[fftN-k] *= g; }
+  }
+
+  fftInPlace(re, im, true);
+
+  // Sliding rectangular window RMS
+  const winSamp = Math.max(1, Math.round((windowMs / 1000) * sr));
+  const hopSamp = Math.max(1, Math.round(winSamp / 4));
+
+  const cumSq = new Float64Array(mLen + 1);
+  for (let i = 0; i < mLen; i++) cumSq[i+1] = cumSq[i] + re[i] * re[i];
+
+  let maxMom = -Infinity;
+  const levels = [];
+
+  for (let s = 0; s + winSamp <= mLen; s += hopSamp) {
+    const ms = (cumSq[s + winSamp] - cumSq[s]) / winSamp;
+    const lev = 20 * Math.log10(Math.max(Math.sqrt(ms), 1e-20));
+    levels.push(lev);
+    if (lev > maxMom) maxMom = lev;
+  }
+
+  // 90th percentile
+  const sortedLevels = [...levels].sort((a,b) => a - b);
+  const p90Level = sortedLevels.length > 0
+    ? sortedLevels[Math.floor(sortedLevels.length * 0.9)]
+    : -Infinity;
+
+  // Mean (energy, ungated)
+  const meanLev = levels.length > 0
+    ? 10 * Math.log10(levels.reduce((s,l) => s + Math.pow(10, l/10), 0) / levels.length)
+    : -Infinity;
+
+  // Gated mean: only include windows above (maxMom + gateThresholdDB)
+  const gateAbs = maxMom + gateThresholdDB;
+  const gatedWindows = levels.filter(l => l >= gateAbs);
+  const gatedMeanLevel = gatedWindows.length > 0
+    ? 10 * Math.log10(gatedWindows.reduce((s,l) => s + Math.pow(10, l/10), 0) / gatedWindows.length)
+    : meanLev; // fallback to ungated if nothing passes gate
+
+  let peak = 0;
+  for (let i = 0; i < raw.length; i++) { const a = Math.abs(raw[i]); if (a > peak) peak = a; }
+  const peakDB = 20 * Math.log10(Math.max(peak, 1e-20));
+
+  return { maxMomentary: maxMom, meanMomentary: meanLev, p90Level, gatedMeanLevel, peakDB, duration };
+}
+
+function nextPow2(n) { let p = 1; while (p < n) p *= 2; return p; }
+
+function fftInPlace(re, im, inv) {
+  const n = re.length;
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    if (i < j) { [re[i],re[j]]=[re[j],re[i]]; [im[i],im[j]]=[im[j],im[i]]; }
+    let m = n >> 1;
+    while (m >= 1 && j >= m) { j -= m; m >>= 1; }
+    j += m;
+  }
+  const dir = inv ? 1 : -1;
+  for (let sz = 2; sz <= n; sz *= 2) {
+    const h = sz/2, ang = dir*2*Math.PI/sz;
+    const wR = Math.cos(ang), wI = Math.sin(ang);
+    for (let i = 0; i < n; i += sz) {
+      let cR=1, cI=0;
+      for (let k = 0; k < h; k++) {
+        const tR = cR*re[i+k+h] - cI*im[i+k+h];
+        const tI = cR*im[i+k+h] + cI*re[i+k+h];
+        re[i+k+h] = re[i+k]-tR; im[i+k+h] = im[i+k]-tI;
+        re[i+k] += tR; im[i+k] += tI;
+        const nR = cR*wR - cI*wI; cI = cR*wI + cI*wR; cR = nR;
+      }
+    }
+  }
+  if (inv) { for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; } }
+}
+
+// ============================================================
+// FILE HANDLING
+// ============================================================
+async function handleFiles(fileList) {
+  const ctx = getAudioContext();
+  audioFiles = [];
+
+  const dz = document.getElementById('dropZone');
+  dz.innerHTML = `<h2>Processing ${fileList.length} files…</h2>
+    <p id="procStatus">Decoding…</p>
+    <div class="progress-bar"><div class="fill" id="procFill" style="width:0%"></div></div>`;
+
+  for (let i = 0; i < fileList.length; i++) {
+    const el = document.getElementById('procStatus');
+    const fl = document.getElementById('procFill');
+    if (el) el.textContent = `Decoding ${fileList[i].name}…`;
+    if (fl) fl.style.width = `${(i/fileList.length*50)}%`;
+    try {
+      const ab = await fileList[i].arrayBuffer();
+      const buf = await ctx.decodeAudioData(ab.slice(0));
+      audioFiles.push({ name: fileList[i].name, buffer: buf });
+    } catch(e) { console.warn(`Skip ${fileList[i].name}:`, e); }
+  }
+
+  windowMs = parseInt(document.getElementById('windowInput').value) || 400;
+  recompute();
+}
+
+function recompute() {
+  const wFn = currentWeighting === 'A' ? aWeight
+            : currentWeighting === 'MAF' ? mafWeight
+            : keaWeight;
+
+  const dz = document.getElementById('dropZone');
+  if (dz) dz.innerHTML = `<h2>Measuring…</h2><p id="procStatus">…</p>
+    <div class="progress-bar"><div class="fill" id="procFill" style="width:50%"></div></div>`;
+
+  for (let i = 0; i < audioFiles.length; i++) {
+    const f = audioFiles[i];
+    const el = document.getElementById('procStatus');
+    const fl = document.getElementById('procFill');
+    if (el) el.textContent = `Measuring ${f.name}…`;
+    if (fl) fl.style.width = `${50+((i+1)/audioFiles.length*50)}%`;
+    const r = measureLevel(f.buffer, wFn);
+    f.momentaryLevel = r.maxMomentary;
+    f.meanMomentary = r.meanMomentary;
+    f.p90Level = r.p90Level;
+    f.gatedMeanLevel = r.gatedMeanLevel;
+    f.peakDB = r.peakDB;
+    f.duration = r.duration;
+  }
+
+  recalcGains();
+}
+
+// ============================================================
+// UI RENDERING
+// ============================================================
+function renderUI() {
+  const unitMap = {A:'dB(A)', MAF:'dB(MAF)', Kea:'dB(Kea)'};
+  const unit = unitMap[currentWeighting];
+  const colorMap = {A:'var(--human-orange)', MAF:'var(--accent)', Kea:'var(--kea-green)'};
+  const colorVar = colorMap[currentWeighting];
+  const srcLabels = {momentary:'Momentary', p90:'P90', gatedMean:'Gated Mean', mean:'Mean', peak:'Peak'};
+  const srcLabel = srcLabels[gainSource];
+
+  document.getElementById('targetDisplay').textContent = `${globalTarget.toFixed(1)} ${unit}`;
+  document.getElementById('targetDisplay').style.color = colorVar;
+  document.getElementById('exportBtn').style.display = 'inline-block';
+  document.getElementById('applyBtn').style.display = 'inline-block';
+  document.getElementById('applyZipBtn').style.display = 'inline-block';
+
+  const sorted = [...audioFiles].sort((a,b) => a.name.localeCompare(b.name));
+  const keyMap = {momentary:'momentaryLevel', p90:'p90Level', gatedMean:'gatedMeanLevel', mean:'meanMomentary', peak:'peakDB'};
+  const srcKey = keyMap[gainSource];
+  const vals = sorted.map(f => f[srcKey]);
+  const gains = sorted.map(f => f.gain);
+  const maxG = Math.max(...gains.map(Math.abs));
+  const spread = Math.max(...vals) - Math.min(...vals);
+
+  // Clipping pre-check: find worst-case headroom across all files
+  let worstHeadroomDB = Infinity;
+  for (const f of sorted) {
+    const linGain = Math.pow(10, f.gain / 20);
+    let pk = 0;
+    for (let ch = 0; ch < f.buffer.numberOfChannels; ch++) {
+      const d = f.buffer.getChannelData(ch);
+      for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > pk) pk = a; }
+    }
+    const headroom = 20 * Math.log10(1.0 / Math.max(pk * linGain, 1e-20));
+    if (headroom < worstHeadroomDB) worstHeadroomDB = headroom;
+  }
+  const willClip = worstHeadroomDB < 0;
+  const clipReduction = willClip ? worstHeadroomDB.toFixed(1) : '0.0';
+
+  let clipWarning = '';
+  if (willClip) {
+    clipWarning = `<div class="info-text" style="color:var(--danger);">
+      <strong>Clipping detected:</strong> worst file exceeds 0 dBFS by ${(-worstHeadroomDB).toFixed(1)} dB after gain.
+      <br><br>
+      <button class="secondary" style="color:var(--danger);border-color:var(--danger);font-size:10px;" onclick="preventClipping(${clipReduction})">
+        Shift all gains by ${clipReduction} dB to prevent clipping
+      </button>
+    </div>`;
+  }
+
+  document.getElementById('mainLayout').innerHTML = `
+    <div class="results-panel">
+      <div class="file-header" style="grid-template-columns: 26px 1fr 44px 56px 56px 56px 56px 56px 56px;">
+        <span>#</span><span>File</span><span>Len</span>
+        <span>Mom</span><span>P90</span><span>G.Mean</span><span>Mean</span><span>Peak</span><span>Gain</span>
+      </div>
+      <div class="file-list" id="fileList"></div>
+    </div>
+    <div class="sidebar">
+      <div class="section-title">Summary</div>
+      <div class="summary-box">
+        <div class="summary-row"><span class="label">Files</span><span class="value">${sorted.length}</span></div>
+        <div class="summary-row"><span class="label">Weighting</span><span class="value" style="color:${colorVar}">${{A:'A (Human)',MAF:'MAF (Terhardt)',Kea:'Kea'}[currentWeighting]}</span></div>
+        <div class="summary-row"><span class="label">Window</span><span class="value">${windowMs} ms</span></div>
+        <div class="summary-row"><span class="label">Gate</span><span class="value">${gateThresholdDB} dB re max</span></div>
+        <div class="summary-row"><span class="label">Gain from</span><span class="value" style="color:var(--accent)">${srcLabel}</span></div>
+        <div class="summary-row"><span class="label">Target (mean)</span><span class="value" style="color:${colorVar}">${globalTarget.toFixed(1)} ${unit}</span></div>
+        <div class="summary-row"><span class="label">±1s Pad</span><span class="value" style="color:${padSilence?'var(--gold)':'var(--text-dim)'}">${padSilence?'ON':'OFF'}</span></div>
+        <div class="summary-row"><span class="label">Spread</span><span class="value">${spread.toFixed(1)} dB</span></div>
+        <div class="summary-row"><span class="label">Max |Gain|</span><span class="value">${maxG.toFixed(1)} dB</span></div>
+      </div>
+
+      ${clipWarning}
+
+      <div class="section-title">Weighting Curves</div>
+      <div class="audiogram-container">
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--human-orange)"></div><span style="color:var(--text-dim)">A-weight</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div><span style="color:var(--text-dim)">MAF</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--kea-green)"></div><span style="color:var(--text-dim)">Kea</span></div>
+        </div>
+        <canvas id="curveCanvas" height="160"></canvas>
+      </div>
+
+      <div class="section-title">Metrics</div>
+      <div class="info-text">
+        <strong>Mom</strong> = max RMS of all ${windowMs} ms windows.<br>
+        <strong>P90</strong> = 90th percentile of window levels (robust to transients).<br>
+        <strong>G.Mean</strong> = energy-mean of windows above gate (${gateThresholdDB} dB re max).<br>
+        <strong>Mean</strong> = energy-mean of all windows (ungated).<br>
+        <strong>Peak</strong> = sample peak (unweighted, dBFS).<br>
+        The column driving gain is highlighted. All weighted metrics use ${unit}.
+      </div>
+      <div id="applyStatus"></div>
+    </div>
+  `;
+
+  const listEl = document.getElementById('fileList');
+  sorted.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'file-row';
+    row.style.gridTemplateColumns = '26px 1fr 44px 56px 56px 56px 56px 56px 56px';
+    const gs = f.gain >= 0 ? '+' : '';
+    const gc = Math.abs(f.gain) > 3 ? 'var(--gold)' : 'var(--text-dim)';
+    const cls = k => gainSource === k ? 'src' : 'nosrc';
+    row.innerHTML = `
+      <span class="index">${i+1}</span>
+      <span class="name" title="${f.name}">${f.name}</span>
+      <span class="metric dim">${f.duration.toFixed(1)}</span>
+      <span class="metric ${cls('momentary')}">${f.momentaryLevel.toFixed(1)}</span>
+      <span class="metric ${cls('p90')}">${f.p90Level.toFixed(1)}</span>
+      <span class="metric ${cls('gatedMean')}">${f.gatedMeanLevel.toFixed(1)}</span>
+      <span class="metric ${cls('mean')}">${f.meanMomentary.toFixed(1)}</span>
+      <span class="metric ${cls('peak')}">${f.peakDB.toFixed(1)}</span>
+      <span class="metric gain-col" style="color:${gc}">${gs}${f.gain.toFixed(1)}</span>
+    `;
+    listEl.appendChild(row);
+  });
+
+  setTimeout(drawCurves, 50);
+}
+
+// ============================================================
+// CHART
+// ============================================================
+function drawCurves() {
+  const canvas = document.getElementById('curveCanvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const w = rect.width - 24, h = 160;
+  canvas.width = w*dpr; canvas.height = h*dpr;
+  canvas.style.width = w+'px'; canvas.style.height = h+'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const pad = {top:8,right:8,bottom:26,left:36};
+  const pw = w-pad.left-pad.right, ph = h-pad.top-pad.bottom;
+  ctx.clearRect(0,0,w,h);
+
+  const logMin=Math.log10(20), logMax=Math.log10(20000);
+  const dbMin=-80, dbMax=10;
+  const xP = f => pad.left+(Math.log10(f)-logMin)/(logMax-logMin)*pw;
+  const yP = db => pad.top+(1-(db-dbMin)/(dbMax-dbMin))*ph;
+
+  ctx.strokeStyle='#263040'; ctx.lineWidth=0.5;
+  [100,1000,10000].forEach(f=>{ctx.beginPath();ctx.moveTo(xP(f),pad.top);ctx.lineTo(xP(f),h-pad.bottom);ctx.stroke();});
+  [-60,-40,-20,0].forEach(db=>{ctx.beginPath();ctx.moveTo(pad.left,yP(db));ctx.lineTo(w-pad.right,yP(db));ctx.stroke();});
+
+  ctx.fillStyle='#7a8fa3';ctx.font='8px "DM Mono"';ctx.textAlign='center';
+  [[20,'20'],[100,'100'],[500,'500'],[1000,'1k'],[2000,'2k'],[5000,'5k'],[10000,'10k'],[20000,'20k']].forEach(([f,l])=>ctx.fillText(l,xP(f),h-pad.bottom+12));
+  ctx.textAlign='right';
+  [-60,-40,-20,0].forEach(db=>ctx.fillText(db+'',pad.left-3,yP(db)+3));
+
+  const freqs=[];
+  for(let lf=logMin;lf<=logMax;lf+=0.01) freqs.push(Math.pow(10,lf));
+
+  ctx.strokeStyle='#e8944a';ctx.lineWidth=1.5;ctx.globalAlpha=currentWeighting==='A'?1:0.25;
+  ctx.beginPath();
+  freqs.forEach((f,i)=>ctx[i===0?'moveTo':'lineTo'](xP(f),yP(aWeight(f))));
+  ctx.stroke();
+
+  // MAF
+  ctx.strokeStyle='#5ba4e6';ctx.lineWidth=1.5;ctx.globalAlpha=currentWeighting==='MAF'?1:0.25;
+  ctx.beginPath();
+  freqs.forEach((f,i)=>{const y=yP(mafWeight(f));if(y>=pad.top&&y<=h-pad.bottom)ctx[i===0?'moveTo':'lineTo'](xP(f),y);});
+  ctx.stroke();
+
+  // Kea
+  ctx.strokeStyle='#4ecb71';ctx.globalAlpha=currentWeighting==='Kea'?1:0.25;
+  ctx.beginPath();
+  freqs.forEach((f,i)=>{const y=yP(keaWeight(f));if(y>=pad.top&&y<=h-pad.bottom)ctx[i===0?'moveTo':'lineTo'](xP(f),y);});
+  ctx.stroke();
+
+  ctx.globalAlpha=0.4;ctx.strokeStyle='#7a8fa3';ctx.lineWidth=0.5;ctx.setLineDash([3,3]);
+  ctx.beginPath();ctx.moveTo(pad.left,yP(0));ctx.lineTo(w-pad.right,yP(0));ctx.stroke();
+  ctx.setLineDash([]);ctx.globalAlpha=1;
+}
+
+// ============================================================
+// CSV EXPORT
+// ============================================================
+function buildCSV() {
+  const unitMap = {A:'dB(A)', MAF:'dB(MAF)', Kea:'dB(Kea)'};
+  const unit = unitMap[currentWeighting];
+  const srcLabels = {momentary:'Momentary',p90:'P90',gatedMean:'GatedMean',mean:'Mean',peak:'Peak'};
+  const src = srcLabels[gainSource];
+  let csv = `File,Duration_s,Momentary_${unit},P90_${unit},GatedMean_${unit},Mean_${unit},Peak_dBFS,GainFrom,Gain_dB,Target_${unit},Gate_dB\n`;
+  [...audioFiles].sort((a,b)=>a.name.localeCompare(b.name)).forEach(f=>{
+    csv += `"${f.name}",${f.duration.toFixed(3)},${f.momentaryLevel.toFixed(2)},${f.p90Level.toFixed(2)},${f.gatedMeanLevel.toFixed(2)},${f.meanMomentary.toFixed(2)},${f.peakDB.toFixed(2)},${src},${f.gain.toFixed(2)},${globalTarget.toFixed(2)},${gateThresholdDB}\n`;
+  });
+  return csv;
+}
+
+function buildTSV() {
+  const unitMap = {A:'dB(A)', MAF:'dB(MAF)', Kea:'dB(Kea)'};
+  const unit = unitMap[currentWeighting];
+  const srcLabels = {momentary:'Momentary',p90:'P90',gatedMean:'GatedMean',mean:'Mean',peak:'Peak'};
+  const src = srcLabels[gainSource];
+  const t = '\t';
+  let tsv = `File${t}Duration_s${t}Momentary_${unit}${t}P90_${unit}${t}GatedMean_${unit}${t}Mean_${unit}${t}Peak_dBFS${t}GainFrom${t}Gain_dB${t}Target_${unit}${t}Gate_dB\n`;
+  [...audioFiles].sort((a,b)=>a.name.localeCompare(b.name)).forEach(f=>{
+    tsv += `${f.name}${t}${f.duration.toFixed(3)}${t}${f.momentaryLevel.toFixed(2)}${t}${f.p90Level.toFixed(2)}${t}${f.gatedMeanLevel.toFixed(2)}${t}${f.meanMomentary.toFixed(2)}${t}${f.peakDB.toFixed(2)}${t}${src}${t}${f.gain.toFixed(2)}${t}${globalTarget.toFixed(2)}${t}${gateThresholdDB}\n`;
+  });
+  return tsv;
+}
+
+async function copyTSV() {
+  const tsv = buildTSV();
+  try {
+    await navigator.clipboard.writeText(tsv);
+    const btn = document.getElementById('exportBtn');
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.style.color = 'var(--kea-green)';
+    btn.style.borderColor = 'var(--kea-green)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
+  } catch(e) {
+    const ta = document.createElement('textarea');
+    ta.value = tsv; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
+
+// ============================================================
+// APPLY GAINS — WAV or ZIP EXPORT
+// ============================================================
+async function applyGains(useZip) {
+  const statusEl = document.getElementById('applyStatus');
+  if (!statusEl) return;
+
+  const mode = useZip ? 'ZIP' : 'individual WAVs';
+  statusEl.innerHTML = `<div class="apply-progress">Preparing ${mode}… 0/${audioFiles.length}</div>`;
+  await new Promise(r=>setTimeout(r,50));
+
+  const zip = useZip ? new JSZip() : null;
+  let clipCount = 0;
+
+  for (let i = 0; i < audioFiles.length; i++) {
+    const f = audioFiles[i];
+    const linGain = Math.pow(10, f.gain / 20);
+
+    statusEl.innerHTML = `<div class="apply-progress">Encoding ${i+1}/${audioFiles.length}: ${f.name}</div>`;
+    await new Promise(r=>setTimeout(r,10));
+
+    const buf = f.buffer;
+    const nCh = buf.numberOfChannels, sr = buf.sampleRate, len = buf.length;
+
+    const channels = [];
+    let clipped = false;
+    for (let ch = 0; ch < nCh; ch++) {
+      const src = buf.getChannelData(ch);
+      const dst = new Float32Array(len);
+      for (let s = 0; s < len; s++) {
+        let v = src[s] * linGain;
+        if (v > 1) { v = 1; clipped = true; }
+        else if (v < -1) { v = -1; clipped = true; }
+        dst[s] = v;
+      }
+      channels.push(dst);
+    }
+    if (clipped) clipCount++;
+
+    const wavBlob = encodeWav(channels, sr);
+
+    let outName = f.name.replace(/\.[^.]+$/, '');
+    const gs = f.gain >= 0 ? '+' : '';
+    outName += `_${gs}${f.gain.toFixed(1)}dB`;
+    if (clipped) outName += '_CLIPPED';
+    outName += '.wav';
+
+    if (useZip) {
+      zip.file(outName, wavBlob);
+    } else {
+      const url = URL.createObjectURL(wavBlob);
+      const a = document.createElement('a');
+      a.href = url; a.download = outName; a.click();
+      URL.revokeObjectURL(url);
+      await new Promise(r=>setTimeout(r,300));
+    }
+  }
+
+  if (useZip) {
+    const csv = buildCSV();
+    zip.file(`levels_${currentWeighting}_${gainSource}.csv`, csv);
+
+    statusEl.innerHTML = `<div class="apply-progress">Compressing ZIP…</div>`;
+    await new Promise(r=>setTimeout(r,10));
+
+    const zipBlob = await zip.generateAsync({type:'blob'}, meta => {
+      statusEl.innerHTML = `<div class="apply-progress">Compressing ZIP… ${Math.round(meta.percent)}%</div>`;
+    });
+
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kea_normalized_${currentWeighting}_${gainSource}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  let doneMsg = useZip
+    ? `Done — ${audioFiles.length} WAVs + CSV in ZIP.`
+    : `Done — ${audioFiles.length} WAVs downloaded individually.`;
+  if (clipCount > 0) doneMsg += ` ${clipCount} clipped.`;
+  statusEl.innerHTML = `<div class="apply-progress" style="border-color:var(--kea-green);color:var(--kea-green);">${doneMsg}</div>`;
+}
+
+function encodeWav(channels, sr) {
+  const nCh = channels.length, len = channels[0].length;
+  const bps = 2, blockAlign = nCh * bps;
+  const dataSize = len * blockAlign;
+  const ab = new ArrayBuffer(44 + dataSize);
+  const v = new DataView(ab);
+
+  const ws = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  ws(0,'RIFF'); v.setUint32(4,ab.byteLength-8,true); ws(8,'WAVE');
+  ws(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true);
+  v.setUint16(22,nCh,true); v.setUint32(24,sr,true);
+  v.setUint32(28,sr*blockAlign,true); v.setUint16(32,blockAlign,true);
+  v.setUint16(34,16,true); ws(36,'data'); v.setUint32(40,dataSize,true);
+
+  let off = 44;
+  for (let s = 0; s < len; s++) {
+    for (let ch = 0; ch < nCh; ch++) {
+      let val = Math.max(-1, Math.min(1, channels[ch][s]));
+      val = val < 0 ? val * 32768 : val * 32767;
+      v.setInt16(off, val|0, true);
+      off += 2;
+    }
+  }
+  return new Blob([ab], {type:'audio/wav'});
+}
+
+// ============================================================
+// DRAG & DROP
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+  document.body.addEventListener('dragover', e => {
+    e.preventDefault();
+    const dz = document.getElementById('dropZone');
+    if (dz) dz.classList.add('dragover');
+  });
+  document.body.addEventListener('dragleave', () => {
+    const dz = document.getElementById('dropZone');
+    if (dz) dz.classList.remove('dragover');
+  });
+  document.body.addEventListener('drop', e => {
+    e.preventDefault();
+    const dz = document.getElementById('dropZone');
+    if (dz) dz.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+  });
+});
+</script>
+</body>
+</html>
