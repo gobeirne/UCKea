@@ -49,7 +49,7 @@ function localDateOnly(date) {
 // Format: filename,dBA_correction,dBKea_correction
 async function loadCorrectionFactors() {
   try {
-    const resp = await fetch("sounds/correction_factors.csv");
+    const resp = await fetch("correction_factors.csv");
     if (!resp.ok) {
       console.warn("No correction_factors.csv found – buttons will be empty.");
       return;
