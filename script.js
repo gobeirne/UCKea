@@ -1,4 +1,4 @@
-console.log("UC Kea Sound Player – script.js v1.1");
+console.log("UC Kea Sound Player – script.js v2.0");
 
 // ── State ──────────────────────────────────────────────
 let currentMode = "dBA";          // "dBA" or "dBKea"
@@ -11,6 +11,8 @@ let calibratedGain = 1;
 
 let currentAudio = null;
 let currentButton = null;
+let isSequencePlaying = false;
+let isReversed = false;
 
 // Correction factors: { key: { file, dBA, dBKea, label } }
 let correctionFactors = {};
@@ -24,17 +26,17 @@ const audioBuffers = {};
 let sessionLog = [];
 let sessionStartTime = "";
 
+const DEFAULT_SEQUENCE = "X,3,X,55,X,3,X,55";
+
 // ── Local time formatting ──────────────────────────────
 function localDateTime(date) {
   if (!date) date = new Date();
-  // Format date and time separately, then get timezone name
   const datePart = date.toLocaleDateString("en-NZ", {
     day: "numeric", month: "numeric", year: "numeric"
   });
   const timePart = date.toLocaleTimeString("en-NZ", {
     hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true
   });
-  // Get timezone abbreviation
   const tzPart = date.toLocaleString("en-NZ", { timeZoneName: "short" })
     .split(" ").pop();
   return `${datePart}, ${timePart} ${tzPart}`;
@@ -42,21 +44,19 @@ function localDateTime(date) {
 
 function localDateOnly(date) {
   if (!date) date = new Date();
-  return date.toLocaleDateString("en-NZ"); // e.g. "23/04/2026"
+  return date.toLocaleDateString("en-NZ");
 }
 
 // ── Correction Factors CSV ─────────────────────────────
-// Format: filename,dBA_correction,dBKea_correction
 async function loadCorrectionFactors() {
   try {
-    const resp = await fetch("correction_factors.csv");
+    const resp = await fetch("sounds/correction_factors.csv");
     if (!resp.ok) {
       console.warn("No correction_factors.csv found – buttons will be empty.");
       return;
     }
     const text = await resp.text();
     const lines = text.trim().split("\n");
-    // Skip header row
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
@@ -65,9 +65,7 @@ async function loadCorrectionFactors() {
       const filename = parts[0];
       const dBACorr = parseFloat(parts[1]) || 0;
       const dBKeaCorr = parseFloat(parts[2]) || 0;
-      // Key = full filename without extension (used in log)
       const nameNoExt = filename.replace(/\.\w+$/, "");
-      // Button label = everything before the last underscore
       const lastUnderscore = nameNoExt.lastIndexOf("_");
       const label = lastUnderscore > 0 ? nameNoExt.substring(0, lastUnderscore) : nameNoExt;
       correctionFactors[nameNoExt] = {
@@ -85,7 +83,6 @@ async function loadCorrectionFactors() {
 async function preloadSounds() {
   const promises = [];
 
-  // Preload all sound files from correction factors
   for (const name of soundFiles) {
     const info = correctionFactors[name];
     const url = `sounds/${info.file}`;
@@ -98,7 +95,6 @@ async function preloadSounds() {
     );
   }
 
-  // Preload calibration sound
   const calibUrl = "sounds/calib.wav";
   promises.push(
     fetch(calibUrl)
@@ -143,6 +139,108 @@ function updateGainFromSlider() {
   }
 }
 
+// ── Sequence Parsing ───────────────────────────────────
+// "X" = play sample, number = seconds of silence
+// e.g. "X,3,X,55,X,3,X,55"
+function parseSequence(str) {
+  const parts = str.split(",").map(s => s.trim());
+  const seq = [];
+  for (const p of parts) {
+    if (p.toUpperCase() === "X") {
+      seq.push({ type: "sound" });
+    } else {
+      const secs = parseFloat(p);
+      if (!isNaN(secs) && secs > 0) {
+        seq.push({ type: "silence", seconds: secs });
+      }
+    }
+  }
+  return seq;
+}
+
+// ── Buffer Assembly ────────────────────────────────────
+// Build a single AudioBuffer from sequence + source sample
+function buildSequenceBuffer(sampleBuffer, sequence, reverse) {
+  const sampleRate = sampleBuffer.sampleRate;
+  const numChannels = sampleBuffer.numberOfChannels;
+
+  // Get sample data (optionally reversed)
+  const sampleData = [];
+  for (let ch = 0; ch < numChannels; ch++) {
+    const channelData = sampleBuffer.getChannelData(ch).slice();
+    if (reverse) channelData.reverse();
+    sampleData.push(channelData);
+  }
+  const sampleLength = sampleData[0].length;
+
+  // Calculate total length
+  let totalFrames = 0;
+  for (const step of sequence) {
+    if (step.type === "sound") {
+      totalFrames += sampleLength;
+    } else {
+      totalFrames += Math.round(step.seconds * sampleRate);
+    }
+  }
+
+  // Create output buffer
+  const output = audioCtx.createBuffer(numChannels, totalFrames, sampleRate);
+
+  // Fill it
+  let offset = 0;
+  for (const step of sequence) {
+    if (step.type === "sound") {
+      for (let ch = 0; ch < numChannels; ch++) {
+        output.getChannelData(ch).set(sampleData[ch], offset);
+      }
+      offset += sampleLength;
+    } else {
+      // Silence: just advance offset (buffer is zero-filled by default)
+      offset += Math.round(step.seconds * sampleRate);
+    }
+  }
+
+  return output;
+}
+
+// ── UI State During Sequence Playback ──────────────────
+function setButtonsDisabled(disabled) {
+  const container = document.getElementById("buttons-container");
+  const buttons = container.querySelectorAll("button");
+  buttons.forEach(btn => {
+    btn.disabled = disabled;
+    btn.style.opacity = disabled ? "0.4" : "1";
+  });
+  // Also disable calibration during playback
+  const calibBtn = document.getElementById("calibrate-btn");
+  if (calibBtn) calibBtn.disabled = disabled;
+}
+
+function showStopButton() {
+  let stopBtn = document.getElementById("stop-btn");
+  if (!stopBtn) {
+    stopBtn = document.createElement("button");
+    stopBtn.id = "stop-btn";
+    stopBtn.className = "stop-btn";
+    stopBtn.textContent = "Stop";
+    stopBtn.onclick = stopSequence;
+    document.getElementById("sequence-controls").appendChild(stopBtn);
+  }
+  stopBtn.style.display = "inline-block";
+}
+
+function hideStopButton() {
+  const stopBtn = document.getElementById("stop-btn");
+  if (stopBtn) stopBtn.style.display = "none";
+}
+
+function stopSequence() {
+  stopCurrentAudio();
+  isSequencePlaying = false;
+  setButtonsDisabled(false);
+  hideStopButton();
+}
+
 // ── Audio Playback ─────────────────────────────────────
 function stopCurrentAudio() {
   if (currentAudio && currentAudio.stop) {
@@ -161,6 +259,9 @@ function getFileCorrectionGain(name) {
 }
 
 function playSound(name, button) {
+  // Don't allow if a sequence is already playing
+  if (isSequencePlaying) return;
+
   stopCurrentAudio();
   // Stop calibration if it's running
   if (calibrationSource) {
@@ -177,8 +278,25 @@ function playSound(name, button) {
     return;
   }
 
+  // Parse sequence
+  const seqInput = document.getElementById("sequence-input");
+  const seqStr = seqInput ? seqInput.value.trim() : "X";
+  const sequence = parseSequence(seqStr);
+
+  if (sequence.length === 0) {
+    console.warn("Empty sequence");
+    return;
+  }
+
+  // Save sequence to localStorage
+  localStorage.setItem("keaSequence", seqStr);
+
+  // Build the assembled buffer
+  const assembledBuffer = buildSequenceBuffer(buffer, sequence, isReversed);
+
+  // Play it
   const source = audioCtx.createBufferSource();
-  source.buffer = buffer;
+  source.buffer = assembledBuffer;
   const gainNode = audioCtx.createGain();
   const correctionGain = getFileCorrectionGain(name);
   gainNode.gain.value = calibratedGain * correctionGain;
@@ -188,6 +306,11 @@ function playSound(name, button) {
   currentAudio = source;
   currentButton = button;
   button.classList.add("active");
+  isSequencePlaying = true;
+  setButtonsDisabled(true);
+  // Keep the active button visually distinct even when "disabled"
+  button.style.opacity = "1";
+  showStopButton();
 
   // Log the playback
   addLogEntry(name, correctionGain);
@@ -198,6 +321,9 @@ function playSound(name, button) {
       currentAudio = null;
       currentButton = null;
     }
+    isSequencePlaying = false;
+    setButtonsDisabled(false);
+    hideStopButton();
   };
 }
 
@@ -207,7 +333,6 @@ const keaColours = [
   "#D73202", "#272318", "#D3CDBF"
 ];
 
-// Returns white or black depending on background luminance
 function contrastText(hex) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -231,6 +356,15 @@ function createButtons() {
     btn.onclick = () => playSound(name, btn);
     container.appendChild(btn);
   });
+}
+
+// ── Forward / Reverse Toggle ───────────────────────────
+function toggleDirection() {
+  isReversed = !isReversed;
+  localStorage.setItem("keaReversed", isReversed ? "true" : "false");
+  const btn = document.getElementById("direction-btn");
+  btn.textContent = isReversed ? "Reverse" : "Forward";
+  btn.classList.toggle("active", isReversed);
 }
 
 // ── Mode Toggle (dB A / dB Kea) ────────────────────────
@@ -284,7 +418,6 @@ let calibrationSource = null;
 function toggleCalibration() {
   const calibBtn = document.getElementById("calibrate-btn");
 
-  // If calibration sound is already playing, stop and collect measurement
   if (calibrationSource) {
     stopCalibrationSound();
     calibBtn.textContent = "Calibration";
@@ -317,10 +450,7 @@ function toggleCalibration() {
     return;
   }
 
-  // First tap: start calibration playback
   stopCurrentAudio();
-
-  // Resume AudioContext within this user gesture
   if (audioCtx.state === "suspended") {
     audioCtx.resume();
   }
@@ -333,7 +463,6 @@ function toggleCalibration() {
 
   alert("Turn your device volume all the way up, then tap OK to play the calibration tone.");
 
-  // Play looping calibration sound — started within user gesture context
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.loop = true;
@@ -341,7 +470,6 @@ function toggleCalibration() {
   source.start();
   calibrationSource = source;
 
-  // Update button to indicate it should be tapped again to stop
   calibBtn.textContent = "Stop & Enter Level";
   calibBtn.classList.add("active");
 }
@@ -376,7 +504,7 @@ function timestamp() {
 }
 
 function addCalibrationLogEntry(level) {
-  const entry = `${timestamp()}\tCALIBRATION\t${level} dB A\t-\t-`;
+  const entry = `${timestamp()}\tCALIBRATION\t${level} dB A\t-\t-\t-\t-`;
   sessionLog.push(entry);
   renderLog();
 }
@@ -388,7 +516,10 @@ function addLogEntry(soundName, correctionGain) {
   const sliderLabel = isCalibrated
     ? `${currentSliderDB} ${currentMode === "dBKea" ? "dB Kea" : "dB A"}`
     : `${currentSliderDB} dB FS`;
-  const entry = `${timestamp()}\t${soundName}\t${sliderLabel}\tCorr: ${corrDB >= 0 ? "+" : ""}${corrDB} dB\tMode: ${currentMode}`;
+  const seqInput = document.getElementById("sequence-input");
+  const seqStr = seqInput ? seqInput.value.trim() : "X";
+  const direction = isReversed ? "Rev" : "Fwd";
+  const entry = `${timestamp()}\t${soundName}\t${sliderLabel}\tCorr: ${corrDB >= 0 ? "+" : ""}${corrDB} dB\t${currentMode}\t${direction}\t${seqStr}`;
   sessionLog.push(entry);
   renderLog();
 }
@@ -400,8 +531,8 @@ function buildFullLog() {
     `Calibration: ${isCalibrated ? calibratedMaxDB + " dB A" : "Uncalibrated"}`,
     `Mode: ${currentMode}`,
     ``,
-    `Time\tSound\tLevel\tCorrection\tMode`,
-    `────────────────────────────────────────────────────────`
+    `Time\tSound\tLevel\tCorrection\tMode\tDirection\tSequence`,
+    `────────────────────────────────────────────────────────────────────────`
   ];
   return header.join("\n") + "\n" + sessionLog.join("\n");
 }
@@ -417,7 +548,6 @@ function copyLog() {
   navigator.clipboard.writeText(text).then(() => {
     alert("Log copied to clipboard.");
   }).catch(() => {
-    // Fallback
     const ta = document.createElement("textarea");
     ta.value = text;
     document.body.appendChild(ta);
@@ -479,6 +609,26 @@ window.onload = async () => {
   slider.addEventListener("change", updateGainFromSlider);
   slider.addEventListener("touchend", updateGainFromSlider);
   updateGainFromSlider();
+
+  // Restore sequence
+  const savedSeq = localStorage.getItem("keaSequence");
+  const seqInput = document.getElementById("sequence-input");
+  seqInput.value = savedSeq || DEFAULT_SEQUENCE;
+  seqInput.addEventListener("change", () => {
+    localStorage.setItem("keaSequence", seqInput.value.trim());
+  });
+
+  // Restore direction
+  const savedDir = localStorage.getItem("keaReversed");
+  if (savedDir === "true") {
+    isReversed = true;
+    const dirBtn = document.getElementById("direction-btn");
+    dirBtn.textContent = "Reverse";
+    dirBtn.classList.add("active");
+  }
+
+  // Hide stop button initially
+  hideStopButton();
 
   // Restore calibration
   const storedCal = localStorage.getItem("keaCalibration");

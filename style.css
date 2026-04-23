@@ -126,6 +126,49 @@ button.active:not(#buttons-container *) {
   color: #000000;
 }
 
+.sequence-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 15px 0;
+}
+
+.sequence-controls label {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.sequence-input {
+  font-family: monospace;
+  font-size: 14px;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  width: 240px;
+  text-align: center;
+}
+
+#direction-btn {
+  min-width: 90px;
+  padding: 8px 12px;
+  font-size: 14px;
+  background-color: #333;
+}
+
+#direction-btn.active {
+  background-color: #d71920;
+}
+
+.stop-btn {
+  min-width: 80px;
+  padding: 8px 14px;
+  font-size: 14px;
+  background-color: #d71920 !important;
+  margin-left: 4px;
+}
+
 #buttons-container {
   display: flex;
   flex-wrap: wrap;
