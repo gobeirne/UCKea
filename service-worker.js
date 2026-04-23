@@ -1,4 +1,4 @@
-const CACHE_NAME = "kea-cache-v3";
+const CACHE_NAME = "kea-cache-v4";
 
 // Resolve paths relative to the service worker's location
 const FILES_TO_CACHE = [
@@ -8,12 +8,7 @@ const FILES_TO_CACHE = [
   "./script.js",
   "./manifest.json",
   "./UClogo.png",
-  "/icon-144.png",
-  "/icon-192.png",
-  "/icon-256.png",
-  "/icon-512.png",
-  "/icon-1024.png",
-  "./correction_factors.csv",
+  "./sounds/correction_factors.csv",
   "./sounds/calib.wav",
   "./sounds/0000_2_AP_-5.4dB.wav",
   "./sounds/0005_AP_+0.4dB.wav",

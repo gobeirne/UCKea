@@ -78,6 +78,18 @@ function localDateOnly(date) {
   return date.toLocaleDateString("en-NZ");
 }
 
+// Filename-safe datetime: "2026-04-23_14-35-07"
+function localDateTimeSafe(date) {
+  if (!date) date = new Date();
+  const y = date.getFullYear();
+  const mo = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const mi = String(date.getMinutes()).padStart(2, "0");
+  const s = String(date.getSeconds()).padStart(2, "0");
+  return `${y}-${mo}-${d}_${h}-${mi}-${s}`;
+}
+
 // ── Correction Factors CSV ─────────────────────────────
 async function loadCorrectionFactors() {
   try {
@@ -817,14 +829,14 @@ function downloadLog() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `kea_session_log_${localDateOnly()}.txt`;
+  a.download = `kea_session_log_${localDateTimeSafe()}.txt`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 function emailLog() {
   const text = buildFullLog();
-  const subject = encodeURIComponent(`Kea Sound Player Log – ${localDateOnly()}`);
+  const subject = encodeURIComponent(`Kea Sound Player Log – ${localDateTime()}`);
   const body = encodeURIComponent(text);
   window.location.href = `mailto:?subject=${subject}&body=${body}`;
 }
