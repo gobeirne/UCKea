@@ -19,8 +19,39 @@ let correctionFactors = {};
 // Ordered list of sound keys (filename without extension) from the CSV
 let soundFiles = [];
 
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let audioCtx = null;
 const audioBuffers = {};
+
+// Create or resume AudioContext — must be called from a user gesture on iOS
+function ensureAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+// iOS unlock: on the very first touch/click anywhere, create and resume the AudioContext.
+// This ensures it's unlocked before the user tries to play anything.
+function unlockAudio() {
+  ensureAudioContext();
+  // Play a tiny silent buffer to fully unlock on iOS
+  if (audioCtx.state === "running") {
+    const silentBuffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+    const source = audioCtx.createBufferSource();
+    source.buffer = silentBuffer;
+    source.connect(audioCtx.destination);
+    source.start();
+  }
+  document.removeEventListener("touchstart", unlockAudio);
+  document.removeEventListener("touchend", unlockAudio);
+  document.removeEventListener("click", unlockAudio);
+}
+document.addEventListener("touchstart", unlockAudio, { once: false });
+document.addEventListener("touchend", unlockAudio, { once: false });
+document.addEventListener("click", unlockAudio, { once: false });
 
 // Session log entries
 let sessionLog = [];
@@ -81,6 +112,7 @@ async function loadCorrectionFactors() {
 
 // ── Preload Sounds ─────────────────────────────────────
 async function preloadSounds() {
+  ensureAudioContext();
   const promises = [];
 
   for (const name of soundFiles) {
@@ -437,6 +469,13 @@ function hideStopButton() {
 }
 
 function stopSequence() {
+  // Log the stop with elapsed time
+  if (isSequencePlaying && audioCtx) {
+    const elapsed = audioCtx.currentTime - playbackStartTime;
+    const elapsedRounded = elapsed.toFixed(1);
+    sessionLog.push(`${timestamp()}\tSTOP\tPressed after ${elapsedRounded} seconds\t-\t-\t-\t-`);
+    renderLog();
+  }
   stopCurrentAudio();
   isSequencePlaying = false;
   setButtonsDisabled(false);
@@ -473,7 +512,7 @@ function playSound(name, button) {
     calibBtn.textContent = "Calibration";
     calibBtn.classList.remove("active");
   }
-  if (audioCtx.state === "suspended") audioCtx.resume();
+  ensureAudioContext();
 
   const buffer = audioBuffers[name];
   if (!buffer) {
@@ -602,7 +641,7 @@ function showTestButton() {
     testButton.className = "calibrate";
     testButton.onclick = () => {
       stopCurrentAudio();
-      if (audioCtx.state === "suspended") audioCtx.resume();
+      ensureAudioContext();
       const buffer = audioBuffers["_calib"];
       if (!buffer) {
         console.warn("No calibration sound buffer available");
@@ -667,9 +706,7 @@ function toggleCalibration() {
   }
 
   stopCurrentAudio();
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
-  }
+  ensureAudioContext();
 
   const buffer = audioBuffers["_calib"];
   if (!buffer) {
