@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Superimposed Noise Generator</title>
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 12px 0; }
+  label { display: inline-flex; gap: 8px; align-items: center; }
+  input[type="number"]{ width: 120px; }
+  button { padding: 8px 12px; }
+  progress { width: 420px; height: 14px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Superimposed Noise Generator </h1>
+
+<div class="row">
+  <label>WAV / MP3 / MP4 files:
+    <input id="files" type="file" accept=".wav,.mp3,.mp4,audio/wav,audio/mpeg,video/mp4" multiple />
+  </label>
+</div>
+
+<div class="row">
+  <label>Noise length (ms):
+    <input id="noiseMs" type="number" value="10000" min="1" step="1" />
+  </label>
+  <label>Superimpositions:
+    <input id="nSuper" type="number" value="10000" min="1" step="1" />
+  </label>
+  <label>Rise/Fall (ms):
+    <input id="riseFallMs" type="number" value="30" min="0" step="1" />
+  </label>
+</div>
+
+<div class="row">
+  <label>Normalise peak to:
+    <input id="peakNorm" type="number" value="0.98" min="0" max="1" step="0.01" />
+  </label>
+  <label>Target RMS (optional):
+    <input id="targetRms" type="number" value="0" min="0" max="1" step="0.01" />
+  </label>
+</div>
+
+<div class="row">
+  <button id="build">Build noise</button>
+  <button id="play" disabled>Play</button>
+  <button id="download" disabled>Download WAV</button>
+  <progress id="prog" value="0" max="1"></progress>
+</div>
+<small>G.O'B. 2026</small>
+<div class="mono" id="log"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  const logEl = $("log");
+  const progEl = $("prog");
+  const filesEl = $("files");
+  const buildBtn = $("build");
+  const playBtn = $("play");
+  const dlBtn = $("download");
+
+  const noiseMsEl = $("noiseMs");
+  const nSuperEl = $("nSuper");
+  const riseFallMsEl = $("riseFallMs");
+  const peakNormEl = $("peakNorm");
+  const targetRmsEl = $("targetRms");
+
+  let audioCtx = null;
+  let rendered = null; // {fs, data(Float32Array)}
+
+  function log(msg) {
+    logEl.textContent += msg + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setProg(x) { progEl.value = Math.max(0, Math.min(1, x)); }
+
+  function fisherYatesShuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  }
+
+  function makeRiseFallEnvelope(N, rfSamp) {
+    // rfSamp applies at both ends. Middle stays at 1.
+    const env = new Float32Array(N);
+    if (rfSamp <= 0) {
+      env.fill(1);
+      return env;
+    }
+    const rf = Math.min(rfSamp, (N / 2) | 0);
+    for (let i = 0; i < N; i++) env[i] = 1;
+
+    // fade in
+    for (let i = 0; i < rf; i++) env[i] = i / (rf - 1 || 1);
+
+    // fade out
+    for (let i = 0; i < rf; i++) env[N - rf + i] = 1 - (i / (rf - 1 || 1));
+
+    return env;
+  }
+
+  function rmsOf(x) {
+    let s = 0;
+    for (let i = 0; i < x.length; i++) s += x[i] * x[i];
+    return Math.sqrt(s / Math.max(1, x.length));
+  }
+
+  function peakAbs(x) {
+    let p = 0;
+    for (let i = 0; i < x.length; i++) {
+      const a = Math.abs(x[i]);
+      if (a > p) p = a;
+    }
+    return p;
+  }
+
+  function normalisePeak(x, targetPeak) {
+    const p = peakAbs(x);
+    if (p === 0) return 1;
+    const g = targetPeak / p;
+    for (let i = 0; i < x.length; i++) x[i] *= g;
+    return g;
+  }
+
+  function normaliseRms(x, targetRms) {
+    const r = rmsOf(x);
+    if (r === 0) return 1;
+    const g = targetRms / r;
+    for (let i = 0; i < x.length; i++) x[i] *= g;
+    return g;
+  }
+
+  async function ensureCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+    return audioCtx;
+  }
+
+  async function decodeFileToMonoFloat32(file, ctx) {
+    const ab = await file.arrayBuffer();
+    const audioBuf = await ctx.decodeAudioData(ab.slice(0));
+    const ch = audioBuf.numberOfChannels;
+    const N = audioBuf.length;
+    const mono = new Float32Array(N);
+    if (ch === 1) {
+      audioBuf.copyFromChannel(mono, 0);
+    } else {
+      const tmp = new Float32Array(N);
+      for (let c = 0; c < ch; c++) {
+        audioBuf.copyFromChannel(tmp, c);
+        for (let i = 0; i < N; i++) mono[i] += tmp[i] / ch;
+      }
+    }
+    return { data: mono, fs: audioBuf.sampleRate };
+  }
+
+  function floatTo16BitPCM(view, offset, input) {
+    for (let i = 0; i < input.length; i++, offset += 2) {
+      let s = Math.max(-1, Math.min(1, input[i]));
+      s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      view.setInt16(offset, s | 0, true);
+    }
+  }
+
+  function writeWavMono16(data, fs) {
+    // 16-bit PCM, mono
+    const numFrames = data.length;
+    const bytesPerSample = 2;
+    const blockAlign = bytesPerSample * 1;
+    const byteRate = fs * blockAlign;
+    const dataSize = numFrames * bytesPerSample;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    // RIFF header
+    const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, "WAVE");
+
+    // fmt chunk
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);          // PCM fmt chunk size
+    view.setUint16(20, 1, true);           // audio format = PCM
+    view.setUint16(22, 1, true);           // channels = 1
+    view.setUint32(24, fs, true);          // sample rate
+    view.setUint32(28, byteRate, true);    // byte rate
+    view.setUint16(32, blockAlign, true);  // block align
+    view.setUint16(34, 16, true);          // bits per sample
+
+    // data chunk
+    writeStr(36, "data");
+    view.setUint32(40, dataSize, true);
+    floatTo16BitPCM(view, 44, data);
+
+    return new Blob([view], { type: "audio/wav" });
+  }
+
+  async function buildNoise() {
+    logEl.textContent = "";
+    setProg(0);
+    rendered = null;
+    playBtn.disabled = true;
+    dlBtn.disabled = true;
+
+    const fileList = [...filesEl.files];
+    if (fileList.length === 0) {
+      log("Please choose one or more WAV files.");
+      return;
+    }
+
+    const noiseMs = Number(noiseMsEl.value);
+    const nSuper = Number(nSuperEl.value);
+    const riseFallMs = Number(riseFallMsEl.value);
+    const peakTarget = Number(peakNormEl.value);
+    const targetRms = Number(targetRmsEl.value);
+
+    const ctx = await ensureCtx();
+
+    log(`Decoding ${fileList.length} file(s)...`);
+    const decoded = [];
+    for (let i = 0; i < fileList.length; i++) {
+      const d = await decodeFileToMonoFloat32(fileList[i], ctx);
+      decoded.push(d);
+      setProg((i + 1) / (fileList.length * 6));
+    }
+
+    // Use AudioContext sample rate as the working fs (decodeAudioData returns buffers at ctx.sampleRate in practice)
+    const fs = ctx.sampleRate;
+    log(`Working sample rate: ${fs} Hz`);
+
+    // Apply 30 ms rise/fall to each recording
+    log(`Applying rise/fall (${riseFallMs} ms) to each recording...`);
+    const ramped = [];
+    for (let i = 0; i < decoded.length; i++) {
+      const y = decoded[i].data;
+      const rfSamp = Math.round(riseFallMs * fs / 1000);
+      const env = makeRiseFallEnvelope(y.length, rfSamp);
+      const out = new Float32Array(y.length);
+      for (let n = 0; n < y.length; n++) out[n] = y[n] * env[n];
+      ramped.push(out);
+      setProg((fileList.length + i + 1) / (fileList.length * 6));
+    }
+
+    // Build balanced shuffled schedule of file indices
+    const Nfiles = ramped.length;
+    const rounds = Math.ceil(nSuper / Nfiles);
+    const schedule = new Int32Array(rounds * Nfiles);
+    let pos = 0;
+    const base = new Array(Nfiles).fill(0).map((_, i) => i);
+    for (let r = 0; r < rounds; r++) {
+      fisherYatesShuffle(base);
+      for (let i = 0; i < Nfiles; i++) schedule[pos++] = base[i];
+    }
+    // Trim schedule to nSuper by reading only first nSuper entries
+    log(`Schedule: ${nSuper} selections (≈ balanced across ${Nfiles} file(s))`);
+
+    // Create 10-second output buffer
+    const L = Math.round(noiseMs * fs / 1000);
+    const out = new Float32Array(L);
+    log(`Output buffer length: ${noiseMs} ms (${L} samples)`);
+
+    // Superimpose
+    log(`Superimposing ${nSuper} times... (this may take a while)`);
+    const progBase = (fileList.length * 2) / (fileList.length * 6);
+    const progSpan = 1 - progBase;
+
+    // Chunk progress updates for UI responsiveness
+    const UI_CHUNK = 50;
+
+    for (let k = 0; k < nSuper; k++) {
+      const idx = schedule[k];          // use first nSuper entries
+      const s = ramped[idx];
+	const L = out.length;
+	const start = (Math.random() * L) | 0;   // anywhere in 0..L-1
+	for (let n = 0; n < s.length; n++) {
+	  out[(start + n) % L] += s[n];
+	}
+
+      if (k % UI_CHUNK === 0) {
+        setProg(progBase + progSpan * (k / nSuper));
+        // let browser breathe
+        await new Promise(requestAnimationFrame);
+      }
+    }
+    setProg(0.98);
+
+    // Normalisation
+    if (targetRms > 0) {
+      const g = normaliseRms(out, targetRms);
+      log(`Applied RMS normalisation to ${targetRms}. Gain=${g.toFixed(4)}`);
+    }
+    if (peakTarget > 0) {
+      const g = normalisePeak(out, peakTarget);
+      log(`Applied peak normalisation to ${peakTarget}. Gain=${g.toFixed(4)}`);
+    }
+
+    log(`Final RMS=${rmsOf(out).toFixed(4)}  Peak=${peakAbs(out).toFixed(4)}`);
+    setProg(1);
+
+    rendered = { fs, data: out };
+    playBtn.disabled = false;
+    dlBtn.disabled = false;
+    log("Done.");
+  }
+
+  async function playNoise() {
+    if (!rendered) return;
+    const ctx = await ensureCtx();
+    const buf = ctx.createBuffer(1, rendered.data.length, rendered.fs);
+    buf.copyToChannel(rendered.data, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start();
+  }
+
+  function downloadWav() {
+    if (!rendered) return;
+    const blob = writeWavMono16(rendered.data, rendered.fs);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `noise_${Number(noiseMsEl.value)}ms_${Number(nSuperEl.value)}x_rf${Number(riseFallMsEl.value)}ms.wav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  buildBtn.addEventListener("click", buildNoise);
+  playBtn.addEventListener("click", playNoise);
+  dlBtn.addEventListener("click", downloadWav);
+})();
+</script>
+</body>
+</html>
