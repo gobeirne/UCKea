@@ -203,6 +203,208 @@ function buildSequenceBuffer(sampleBuffer, sequence, reverse) {
   return output;
 }
 
+// ── Waveform Display ───────────────────────────────────
+let lastAssembledBuffer = null;
+let lastAssembledName = "";
+let waveformAnimationId = null;
+let playbackStartTime = 0;
+let playbackDuration = 0;
+
+function drawWaveform(audioBuffer, progress) {
+  const container = document.getElementById("waveform-container");
+  const canvas = document.getElementById("waveform-canvas");
+  if (!canvas) return;
+
+  container.style.display = "block";
+
+  // Set canvas resolution to match display size
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  const w = rect.width;
+  const h = rect.height;
+
+  // Clear
+  ctx.clearRect(0, 0, w, h);
+
+  // Draw waveform using channel 0
+  const data = audioBuffer.getChannelData(0);
+  const samplesPerPixel = Math.floor(data.length / w);
+  const mid = h / 2;
+
+  // Draw full waveform in light grey
+  ctx.beginPath();
+  for (let x = 0; x < w; x++) {
+    const start = x * samplesPerPixel;
+    let min = 0, max = 0;
+    for (let j = start; j < start + samplesPerPixel && j < data.length; j++) {
+      if (data[j] < min) min = data[j];
+      if (data[j] > max) max = data[j];
+    }
+    const yMin = mid - max * mid;
+    const yMax = mid - min * mid;
+    ctx.moveTo(x, yMin);
+    ctx.lineTo(x, yMax);
+  }
+  ctx.strokeStyle = "#ccc";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Draw progress portion in Kea red
+  if (progress > 0) {
+    const progressX = Math.min(w, w * progress);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, progressX, h);
+    ctx.clip();
+
+    ctx.beginPath();
+    for (let x = 0; x < progressX; x++) {
+      const start = x * samplesPerPixel;
+      let min = 0, max = 0;
+      for (let j = start; j < start + samplesPerPixel && j < data.length; j++) {
+        if (data[j] < min) min = data[j];
+        if (data[j] > max) max = data[j];
+      }
+      const yMin = mid - max * mid;
+      const yMax = mid - min * mid;
+      ctx.moveTo(x, yMin);
+      ctx.lineTo(x, yMax);
+    }
+    ctx.strokeStyle = "#d71920";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Playhead line
+    ctx.beginPath();
+    ctx.moveTo(progressX, 0);
+    ctx.lineTo(progressX, h);
+    ctx.strokeStyle = "#d71920";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // Centre line
+  ctx.beginPath();
+  ctx.moveTo(0, mid);
+  ctx.lineTo(w, mid);
+  ctx.strokeStyle = "#e0e0e0";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+}
+
+function startWaveformAnimation() {
+  function animate() {
+    if (!isSequencePlaying || !lastAssembledBuffer) {
+      drawWaveform(lastAssembledBuffer, 1);
+      return;
+    }
+    const elapsed = audioCtx.currentTime - playbackStartTime;
+    const progress = Math.min(1, elapsed / playbackDuration);
+    drawWaveform(lastAssembledBuffer, progress);
+    waveformAnimationId = requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+function stopWaveformAnimation() {
+  if (waveformAnimationId) {
+    cancelAnimationFrame(waveformAnimationId);
+    waveformAnimationId = null;
+  }
+  // Draw final state
+  if (lastAssembledBuffer) {
+    drawWaveform(lastAssembledBuffer, 1);
+  }
+}
+
+// ── WAV Export ─────────────────────────────────────────
+function audioBufferToWav(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const format = 1; // PCM
+  const bitsPerSample = 16;
+
+  // Interleave channels
+  let interleaved;
+  if (numChannels === 1) {
+    interleaved = buffer.getChannelData(0);
+  } else {
+    const length = buffer.length;
+    interleaved = new Float32Array(length * numChannels);
+    for (let i = 0; i < length; i++) {
+      for (let ch = 0; ch < numChannels; ch++) {
+        interleaved[i * numChannels + ch] = buffer.getChannelData(ch)[i];
+      }
+    }
+  }
+
+  const dataLength = interleaved.length * (bitsPerSample / 8);
+  const headerLength = 44;
+  const arrayBuffer = new ArrayBuffer(headerLength + dataLength);
+  const view = new DataView(arrayBuffer);
+
+  // RIFF header
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
+  view.setUint16(32, numChannels * (bitsPerSample / 8), true);
+  view.setUint16(34, bitsPerSample, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, dataLength, true);
+
+  // PCM samples
+  let offset = 44;
+  for (let i = 0; i < interleaved.length; i++) {
+    const sample = Math.max(-1, Math.min(1, interleaved[i]));
+    const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+    view.setInt16(offset, int16, true);
+    offset += 2;
+  }
+
+  return new Blob([arrayBuffer], { type: "audio/wav" });
+}
+
+function writeString(view, offset, str) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
+
+function downloadAssembledWav() {
+  if (!lastAssembledBuffer) return;
+  const blob = audioBufferToWav(lastAssembledBuffer);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const seqInput = document.getElementById("sequence-input");
+  const seqStr = seqInput ? seqInput.value.trim() : "X";
+  const modeLabel = currentMode === "dBKea" ? "dBKea" : "dBA";
+  const direction = isReversed ? "Reverse" : "Forward";
+  a.download = `${lastAssembledName}_${modeLabel}_${seqStr}_${direction}.wav`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Set up waveform click handler
+document.addEventListener("DOMContentLoaded", () => {
+  const canvas = document.getElementById("waveform-canvas");
+  if (canvas) {
+    canvas.addEventListener("click", downloadAssembledWav);
+  }
+});
+
 // ── UI State During Sequence Playback ──────────────────
 function setButtonsDisabled(disabled) {
   const container = document.getElementById("buttons-container");
@@ -239,6 +441,7 @@ function stopSequence() {
   isSequencePlaying = false;
   setButtonsDisabled(false);
   hideStopButton();
+  stopWaveformAnimation();
 }
 
 // ── Audio Playback ─────────────────────────────────────
@@ -294,6 +497,13 @@ function playSound(name, button) {
   // Build the assembled buffer
   const assembledBuffer = buildSequenceBuffer(buffer, sequence, isReversed);
 
+  // Store for waveform display and download
+  lastAssembledBuffer = assembledBuffer;
+  lastAssembledName = name;
+
+  // Draw initial waveform (no progress yet)
+  drawWaveform(assembledBuffer, 0);
+
   // Play it
   const source = audioCtx.createBufferSource();
   source.buffer = assembledBuffer;
@@ -301,6 +511,9 @@ function playSound(name, button) {
   const correctionGain = getFileCorrectionGain(name);
   gainNode.gain.value = calibratedGain * correctionGain;
   source.connect(gainNode).connect(audioCtx.destination);
+
+  playbackStartTime = audioCtx.currentTime;
+  playbackDuration = assembledBuffer.duration;
   source.start();
 
   currentAudio = source;
@@ -308,9 +521,11 @@ function playSound(name, button) {
   button.classList.add("active");
   isSequencePlaying = true;
   setButtonsDisabled(true);
-  // Keep the active button visually distinct even when "disabled"
   button.style.opacity = "1";
   showStopButton();
+
+  // Start waveform progress animation
+  startWaveformAnimation();
 
   // Log the playback
   addLogEntry(name, correctionGain);
@@ -324,6 +539,7 @@ function playSound(name, button) {
     isSequencePlaying = false;
     setButtonsDisabled(false);
     hideStopButton();
+    stopWaveformAnimation();
   };
 }
 
