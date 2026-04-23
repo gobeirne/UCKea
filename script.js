@@ -49,7 +49,7 @@ function localDateOnly(date) {
 // Format: filename,dBA_correction,dBKea_correction
 async function loadCorrectionFactors() {
   try {
-    const resp = await fetch("correction_factors.csv");
+    const resp = await fetch("sounds/correction_factors.csv");
     if (!resp.ok) {
       console.warn("No correction_factors.csv found – buttons will be empty.");
       return;
@@ -162,6 +162,13 @@ function getFileCorrectionGain(name) {
 
 function playSound(name, button) {
   stopCurrentAudio();
+  // Stop calibration if it's running
+  if (calibrationSource) {
+    stopCalibrationSound();
+    const calibBtn = document.getElementById("calibrate-btn");
+    calibBtn.textContent = "Calibration";
+    calibBtn.classList.remove("active");
+  }
   if (audioCtx.state === "suspended") audioCtx.resume();
 
   const buffer = audioBuffers[name];
@@ -272,29 +279,18 @@ function showTestButton() {
   }
 }
 
+let calibrationSource = null;
+
 function toggleCalibration() {
-  stopCurrentAudio();
-  if (audioCtx.state === "suspended") audioCtx.resume();
+  const calibBtn = document.getElementById("calibrate-btn");
 
-  alert("Please turn your device volume all the way up before continuing.");
+  // If calibration sound is already playing, stop and collect measurement
+  if (calibrationSource) {
+    stopCalibrationSound();
+    calibBtn.textContent = "Calibration";
+    calibBtn.classList.remove("active");
 
-  const buffer = audioBuffers["_calib"];
-  if (!buffer) {
-    alert("No calibration sound file found. Please add calib.wav or calib.mp3 to the sounds/ folder.");
-    return;
-  }
-
-  // Play calibration sound on loop using Web Audio API
-  const source = audioCtx.createBufferSource();
-  source.buffer = buffer;
-  source.loop = true;
-  source.connect(audioCtx.destination);
-  source.start();
-  currentAudio = source;
-
-  setTimeout(() => {
     const measured = prompt("Enter measured calibration level (in dB A):");
-    stopCurrentAudio();
     if (!measured || isNaN(measured)) return;
 
     calibratedMaxDB = parseFloat(measured);
@@ -317,9 +313,44 @@ function toggleCalibration() {
       timestamp: new Date().toISOString()
     }));
 
-    // Log calibration event
     addCalibrationLogEntry(calibratedMaxDB);
-  }, 2000);
+    return;
+  }
+
+  // First tap: start calibration playback
+  stopCurrentAudio();
+
+  // Resume AudioContext within this user gesture
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+
+  const buffer = audioBuffers["_calib"];
+  if (!buffer) {
+    alert("No calibration sound file found. Please add calib.wav to the sounds/ folder.");
+    return;
+  }
+
+  alert("Turn your device volume all the way up, then tap OK to play the calibration tone.");
+
+  // Play looping calibration sound — started within user gesture context
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  source.connect(audioCtx.destination);
+  source.start();
+  calibrationSource = source;
+
+  // Update button to indicate it should be tapped again to stop
+  calibBtn.textContent = "Stop & Enter Level";
+  calibBtn.classList.add("active");
+}
+
+function stopCalibrationSound() {
+  if (calibrationSource) {
+    try { calibrationSource.stop(); } catch (e) {}
+    calibrationSource = null;
+  }
 }
 
 function applyStoredCalibration(data) {
