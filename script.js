@@ -836,10 +836,28 @@ function downloadLog() {
 
 function emailLog() {
   const text = buildFullLog();
-  const subject = encodeURIComponent(`Kea Sound Player Log - ${localDateTime()}`);
-  // Replace \n with \r\n so Outlook preserves line breaks
-  const body = encodeURIComponent(text.replace(/\n/g, "\r\n"));
-  window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  const filename = `kea_session_log_${localDateTimeSafe()}.tsv`;
+
+  // Use Web Share API with file attachment (works on iOS/iPad)
+  if (navigator.canShare) {
+    const file = new File([text], filename, { type: "text/tab-separated-values" });
+    if (navigator.canShare({ files: [file] })) {
+      navigator.share({
+        title: `Kea Sound Player Log - ${localDateTime()}`,
+        files: [file]
+      }).catch(() => {});
+      return;
+    }
+  }
+
+  // Fallback: download the file instead
+  const blob = new Blob([text], { type: "text/tab-separated-values" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function clearLog() {
