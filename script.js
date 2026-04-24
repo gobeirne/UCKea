@@ -837,7 +837,8 @@ function downloadLog() {
 function emailLog() {
   const text = buildFullLog();
   const subject = encodeURIComponent(`Kea Sound Player Log - ${localDateTime()}`);
-  const body = encodeURIComponent(text);
+  // Replace \n with \r\n so Outlook preserves line breaks
+  const body = encodeURIComponent(text.replace(/\n/g, "\r\n"));
   window.location.href = `mailto:?subject=${subject}&body=${body}`;
 }
 
