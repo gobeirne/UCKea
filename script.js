@@ -94,7 +94,8 @@ function localDateTimeSafe(date) {
 }
 
 // ── Correction Factors CSV ─────────────────────────────
-// Format: order,colour,filename,dBA_correction,dBKea_correction
+// Format: filename,dBA_correction,dBKea_correction[,order,colour]
+// Columns 4 and 5 are optional for backward compatibility
 async function loadCorrectionFactors() {
   try {
     const resp = await fetch(`correction_factors.csv?v=${APP_VERSION}`);
@@ -109,12 +110,12 @@ async function loadCorrectionFactors() {
       const line = lines[i].trim();
       if (!line) continue;
       const parts = line.split(",").map(s => s.trim());
-      if (parts.length < 5) continue;
-      const order = parseInt(parts[0]) || i;
-      const colour = parts[1] || "";
-      const filename = parts[2];
-      const dBACorr = parseFloat(parts[3]) || 0;
-      const dBKeaCorr = parseFloat(parts[4]) || 0;
+      if (parts.length < 3) continue;
+      const filename = parts[0];
+      const dBACorr = parseFloat(parts[1]) || 0;
+      const dBKeaCorr = parseFloat(parts[2]) || 0;
+      const order = parts.length > 3 ? (parseInt(parts[3]) || i) : i;
+      const colour = parts.length > 4 ? parts[4] : "";
       const nameNoExt = filename.replace(/\.\w+$/, "");
       const lastUnderscore = nameNoExt.lastIndexOf("_");
       const label = lastUnderscore > 0 ? nameNoExt.substring(0, lastUnderscore) : nameNoExt;
