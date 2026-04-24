@@ -837,30 +837,45 @@ function downloadLog() {
 function emailLog() {
   const text = buildFullLog();
   const filename = `kea_session_log_${localDateTimeSafe()}.tsv`;
+  const blob = new Blob([text], { type: "text/tab-separated-values" });
 
-  // Use Web Share API with file attachment (works on iOS/iPad)
+  // Try Web Share API with file attachment (iOS/iPad/mobile)
   if (navigator.share && navigator.canShare) {
-    const file = new File([text], filename, { type: "text/tab-separated-values" });
-    if (navigator.canShare({ files: [file] })) {
-      navigator.share({
-        title: `Kea Sound Player Log - ${localDateTime()}`,
-        files: [file]
-      }).catch(() => {});
-      return;
+    try {
+      const file = new File([text], filename, { type: "text/tab-separated-values" });
+      if (navigator.canShare({ files: [file] })) {
+        navigator.share({
+          title: `Kea Sound Player Log - ${localDateTime()}`,
+          files: [file]
+        }).catch(() => { triggerDownload(blob, filename); });
+        return;
+      }
+    } catch (e) {
+      // Fall through to download
     }
   }
 
-  // Fallback: download the file
-  const blob = new Blob([text], { type: "text/tab-separated-values" });
+  triggerDownload(blob, filename);
+}
+
+function triggerDownload(blob, filename) {
+  // Edge/IE legacy
+  if (window.navigator.msSaveOrOpenBlob) {
+    window.navigator.msSaveOrOpenBlob(blob, filename);
+    return;
+  }
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
+  a.style.display = "none";
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  alert("Log downloaded as " + filename);
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 500);
 }
 
 function clearLog() {
