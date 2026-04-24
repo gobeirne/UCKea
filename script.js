@@ -791,13 +791,13 @@ function addLogEntry(soundName, correctionGain) {
 
 function buildFullLog() {
   const header = [
-    `UC Kea Sound Player – Session Log`,
+    `UC Kea Sound Player - Session Log`,
     `Session started: ${sessionStartTime}`,
     `Calibration: ${isCalibrated ? calibratedMaxDB + " dB A" : "Uncalibrated"}`,
     `Mode: ${currentMode}`,
     ``,
     `Time\tSound\tLevel\tCorrection\tMode\tDirection\tSequence`,
-    `────────────────────────────────────────────────────────────────────────`
+    `------------------------------------------------------------------------`
   ];
   return header.join("\n") + "\n" + sessionLog.join("\n");
 }
@@ -836,7 +836,7 @@ function downloadLog() {
 
 function emailLog() {
   const text = buildFullLog();
-  const subject = encodeURIComponent(`Kea Sound Player Log – ${localDateTime()}`);
+  const subject = encodeURIComponent(`Kea Sound Player Log - ${localDateTime()}`);
   const body = encodeURIComponent(text);
   window.location.href = `mailto:?subject=${subject}&body=${body}`;
 }
