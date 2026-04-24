@@ -91,6 +91,7 @@ function localDateTimeSafe(date) {
 }
 
 // ── Correction Factors CSV ─────────────────────────────
+// Format: order,colour,filename,dBA_correction,dBKea_correction
 async function loadCorrectionFactors() {
   try {
     const resp = await fetch("correction_factors.csv");
@@ -100,22 +101,29 @@ async function loadCorrectionFactors() {
     }
     const text = await resp.text();
     const lines = text.trim().split("\n");
+    const entries = [];
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
       const parts = line.split(",").map(s => s.trim());
-      if (parts.length < 3) continue;
-      const filename = parts[0];
-      const dBACorr = parseFloat(parts[1]) || 0;
-      const dBKeaCorr = parseFloat(parts[2]) || 0;
+      if (parts.length < 5) continue;
+      const order = parseInt(parts[0]) || i;
+      const colour = parts[1] || "";
+      const filename = parts[2];
+      const dBACorr = parseFloat(parts[3]) || 0;
+      const dBKeaCorr = parseFloat(parts[4]) || 0;
       const nameNoExt = filename.replace(/\.\w+$/, "");
       const lastUnderscore = nameNoExt.lastIndexOf("_");
       const label = lastUnderscore > 0 ? nameNoExt.substring(0, lastUnderscore) : nameNoExt;
       correctionFactors[nameNoExt] = {
-        file: filename, dBA: dBACorr, dBKea: dBKeaCorr, label: label
+        file: filename, dBA: dBACorr, dBKea: dBKeaCorr, label: label,
+        colour: colour, order: order
       };
-      soundFiles.push(nameNoExt);
+      entries.push({ key: nameNoExt, order: order });
     }
+    // Sort by order column
+    entries.sort((a, b) => a.order - b.order);
+    soundFiles = entries.map(e => e.key);
     console.log(`Loaded ${soundFiles.length} sounds from correction_factors.csv`);
   } catch (e) {
     console.error("Error loading correction factors:", e);
@@ -614,9 +622,10 @@ function createButtons() {
   container.innerHTML = "";
 
   soundFiles.forEach((name, i) => {
-    const bg = keaColours[i % keaColours.length];
+    const info = correctionFactors[name];
+    const bg = info.colour || keaColours[i % keaColours.length];
     const btn = document.createElement("button");
-    btn.textContent = correctionFactors[name].label;
+    btn.textContent = info.label;
     btn.style.backgroundColor = bg;
     btn.style.color = contrastText(bg);
     btn.dataset.keaColor = bg;
