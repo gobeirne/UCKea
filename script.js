@@ -839,7 +839,7 @@ function emailLog() {
   const filename = `kea_session_log_${localDateTimeSafe()}.tsv`;
 
   // Use Web Share API with file attachment (works on iOS/iPad)
-  if (navigator.canShare) {
+  if (navigator.share && navigator.canShare) {
     const file = new File([text], filename, { type: "text/tab-separated-values" });
     if (navigator.canShare({ files: [file] })) {
       navigator.share({
@@ -850,14 +850,17 @@ function emailLog() {
     }
   }
 
-  // Fallback: download the file instead
+  // Fallback: download the file
   const blob = new Blob([text], { type: "text/tab-separated-values" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  alert("Log downloaded as " + filename);
 }
 
 function clearLog() {
