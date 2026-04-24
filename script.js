@@ -1,4 +1,7 @@
-console.log("UC Kea Sound Player – script.js v2.0");
+console.log("UC Kea Sound Player – script.js v2.1");
+
+// Bump this when you update correction_factors.csv or sound files
+const APP_VERSION = "2.1";
 
 // ── State ──────────────────────────────────────────────
 let currentMode = "dBA";          // "dBA" or "dBKea"
@@ -94,7 +97,7 @@ function localDateTimeSafe(date) {
 // Format: order,colour,filename,dBA_correction,dBKea_correction
 async function loadCorrectionFactors() {
   try {
-    const resp = await fetch("correction_factors.csv");
+    const resp = await fetch(`correction_factors.csv?v=${APP_VERSION}`);
     if (!resp.ok) {
       console.warn("No correction_factors.csv found – buttons will be empty.");
       return;
@@ -137,7 +140,7 @@ async function preloadSounds() {
 
   for (const name of soundFiles) {
     const info = correctionFactors[name];
-    const url = `sounds/${info.file}`;
+    const url = `sounds/${info.file}?v=${APP_VERSION}`;
     promises.push(
       fetch(url)
         .then(r => r.arrayBuffer())
@@ -147,7 +150,7 @@ async function preloadSounds() {
     );
   }
 
-  const calibUrl = "sounds/calib.wav";
+  const calibUrl = `sounds/calib.wav?v=${APP_VERSION}`;
   promises.push(
     fetch(calibUrl)
       .then(r => {
