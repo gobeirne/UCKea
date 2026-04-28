@@ -355,8 +355,8 @@
 <body>
 
 <div class="header">
-  <h1>Kea Level Equalizer <span>v2.0</span></h1>
-  <div class="subtitle">Weighted momentary level measurement with gain normalization & WAV export. <small>G.O'B. 2026</small></div>
+  <h1>Kea Level Equalizer <span>v2.5</span></h1>
+  <div class="subtitle">Weighted momentary level measurement with gain normalization & direct folder WAV export. <small>G.O'B. 2026</small></div>
 </div>
 
 <div class="controls-bar">
@@ -380,8 +380,21 @@
       <option value="p90">90th percentile</option>
       <option value="gatedMean">Gated mean</option>
       <option value="mean">Mean (ungated)</option>
+      <option value="lufs_mom">LUFS momentary</option>
+      <option value="lufs_int">LUFS integrated</option>
       <option value="peak">Peak (dBFS)</option>
     </select>
+  </div>
+  <div class="control-group">
+    <label>Target</label>
+    <div class="toggle-bar" id="targetToggle">
+      <button data-tgt="auto" class="active" onclick="setTargetMode('auto')">Auto</button>
+      <button data-tgt="custom" onclick="setTargetMode('custom')">Custom</button>
+    </div>
+  </div>
+  <div class="control-group" id="customTargetGroup" style="display:none;">
+    <input type="number" class="small-input" id="customTargetInput" value="-27.7" step="0.1" style="width:66px;">
+    <label style="text-transform:none;">dB</label>
   </div>
   <div class="control-group">
     <label>Gate</label>
@@ -401,9 +414,10 @@
   </div>
   <div class="control-group" style="margin-left:auto;">
     <button class="primary" onclick="document.getElementById('fileInput').click()">Load Files</button>
+    <button class="primary" onclick="chooseSourceFolder()">Load Folder</button>
     <input type="file" id="fileInput" multiple accept="audio/*" style="display:none" onchange="handleFiles(this.files)">
     <button class="secondary" id="exportBtn" onclick="copyTSV()" style="display:none">Copy TSV</button>
-    <button class="apply-btn" id="applyBtn" onclick="applyGains(false)" style="display:none">Save WAVs</button>
+    <button class="apply-btn" id="applyBtn" onclick="applyGains(false)" style="display:none">Save WAVs to Folder</button>
     <button class="apply-btn" id="applyZipBtn" onclick="applyGains(true)" style="display:none">Save ZIP</button>
   </div>
 </div>
@@ -412,7 +426,8 @@
   <div class="drop-zone" id="dropZone">
     <h2>Drop your kea call recordings here</h2>
     <p>WAV, FLAC, MP3, OGG — any format the Web Audio API supports</p>
-    <p style="margin-top:8px; color:var(--kea-green);">or click "Load Files" above</p>
+    <p style="margin-top:8px; color:var(--kea-green);">or click "Load Files" / "Load Folder" above</p>
+    <p style="margin-top:8px;">Folder mode can save normalized WAVs directly back into that folder, avoiding browser-download marking.</p>
   </div>
 </div>
 
@@ -509,6 +524,124 @@ function mafWeight(f) {
 }
 
 // ============================================================
+// K-WEIGHTING + LUFS / TRUE PEAK (YouLean-style, BS.1770-oriented)
+// ============================================================
+const K_COEFFS = {
+  48000: {
+    s1: { b0:1.53512485958697, b1:-2.69169618940638, b2:1.19839281085285,
+          a1:-1.69065929318241, a2:0.73248077421585 },
+    s2: { b0:1.0, b1:-2.0, b2:1.0,
+          a1:-1.99004745483398, a2:0.99007225036621 }
+  },
+  44100: {
+    s1: { b0:1.5308412300503478, b1:-2.6509799951547297, b2:1.1690790799215869,
+          a1:-1.6636551132560204, a2:0.7125954280732254 },
+    s2: { b0:1.0, b1:-2.0, b2:1.0,
+          a1:-1.9891696736297957, a2:0.9891990357870394 }
+  }
+};
+
+function getKCoeffs(sr) {
+  if (K_COEFFS[sr]) return K_COEFFS[sr];
+  return Math.abs(sr - 44100) <= Math.abs(sr - 48000) ? K_COEFFS[44100] : K_COEFFS[48000];
+}
+
+function applyBiquad(input, c) {
+  const out = new Float64Array(input.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < input.length; i++) {
+    const x0 = input[i];
+    const y0 = c.b0*x0 + c.b1*x1 + c.b2*x2 - c.a1*y1 - c.a2*y2;
+    out[i] = y0;
+    x2 = x1; x1 = x0; y2 = y1; y1 = y0;
+  }
+  return out;
+}
+
+function kWeightSignal(audioBuffer, includePad = false) {
+  const sr = audioBuffer.sampleRate;
+  const nCh = audioBuffer.numberOfChannels;
+  const len = audioBuffer.length;
+  const pad = includePad ? sr : 0;
+  const mono = new Float64Array(len + 2 * pad);
+
+  for (let ch = 0; ch < nCh; ch++) {
+    const d = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < len; i++) mono[i + pad] += d[i] / nCh;
+  }
+
+  const coeffs = getKCoeffs(sr);
+  return applyBiquad(applyBiquad(mono, coeffs.s1), coeffs.s2);
+}
+
+function blockPowersFromSignal(signal, sr, windowSeconds, hopSeconds) {
+  const winSamp = Math.max(1, Math.round(windowSeconds * sr));
+  const hopSamp = Math.max(1, Math.round(hopSeconds * sr));
+  const cumSq = new Float64Array(signal.length + 1);
+  for (let i = 0; i < signal.length; i++) cumSq[i+1] = cumSq[i] + signal[i] * signal[i];
+
+  const powers = [];
+  if (signal.length < winSamp) {
+    powers.push(cumSq[signal.length] / winSamp);
+  } else {
+    for (let s = 0; s + winSamp <= signal.length; s += hopSamp) {
+      powers.push((cumSq[s + winSamp] - cumSq[s]) / winSamp);
+    }
+  }
+  return powers;
+}
+
+function powerToLUFS(ms) {
+  return -0.691 + 10 * Math.log10(Math.max(ms, 1e-20));
+}
+
+function gatedIntegratedLUFS(blockPowers) {
+  const absSurvivors = blockPowers.filter(ms => powerToLUFS(ms) >= -70);
+  if (absSurvivors.length === 0) return -Infinity;
+
+  const absMean = absSurvivors.reduce((sum, ms) => sum + ms, 0) / absSurvivors.length;
+  const relGate = powerToLUFS(absMean) - 10;
+  const relSurvivors = absSurvivors.filter(ms => powerToLUFS(ms) >= relGate);
+  if (relSurvivors.length === 0) return -Infinity;
+
+  const gatedMean = relSurvivors.reduce((sum, ms) => sum + ms, 0) / relSurvivors.length;
+  return powerToLUFS(gatedMean);
+}
+
+function estimateTruePeakDB(audioBuffer) {
+  // 4x linear interpolation estimate: better than sample peak, but not a full
+  // ITU oversampled low-pass true-peak filter.
+  let peak = 0;
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const d = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < d.length - 1; i++) {
+      const a = d[i], b = d[i + 1];
+      peak = Math.max(peak, Math.abs(a), Math.abs((3*a+b)/4), Math.abs((a+b)/2), Math.abs((a+3*b)/4));
+    }
+    if (d.length) peak = Math.max(peak, Math.abs(d[d.length - 1]));
+  }
+  return 20 * Math.log10(Math.max(peak, 1e-20));
+}
+
+function measureLUFS(audioBuffer) {
+  const sr = audioBuffer.sampleRate;
+  const kw = kWeightSignal(audioBuffer, padSilence);
+
+  // Fine-grained 25ms hop for accurate momentary max
+  const momPowersFine = blockPowersFromSignal(kw, sr, 0.4, 0.025);
+  // Standard 100ms hop for integrated loudness gating (per BS.1770)
+  const momPowers = blockPowersFromSignal(kw, sr, 0.4, 0.1);
+  const stPowers = blockPowersFromSignal(kw, sr, 3.0, 1.0);
+
+  return {
+    momentary: Math.max(...momPowersFine.map(powerToLUFS)),
+    shortTerm: Math.max(...stPowers.map(powerToLUFS)),
+    integrated: gatedIntegratedLUFS(momPowers),
+    truePeakDB: estimateTruePeakDB(audioBuffer)
+  };
+}
+
+// ============================================================
 // APP STATE
 // ============================================================
 let currentWeighting = 'A';
@@ -519,6 +652,7 @@ let windowMs = 400;
 let audioFiles = [];
 let globalTarget = null;
 let audioCtx = null;
+let sourceDirHandle = null;
 
 function getAudioContext() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -544,16 +678,36 @@ function onGainSourceChange() {
   if (audioFiles.length > 0) recalcGains();
 }
 
+let targetMode = 'auto'; // 'auto' or 'custom'
+
+function setTargetMode(mode) {
+  targetMode = mode;
+  document.querySelectorAll('#targetToggle button').forEach(b =>
+    b.classList.toggle('active', b.dataset.tgt === mode));
+  document.getElementById('customTargetGroup').style.display = mode === 'custom' ? 'flex' : 'none';
+  if (audioFiles.length > 0) recalcGains();
+}
+
 function recalcGains() {
   const keyMap = {
     momentary: 'momentaryLevel',
     mean: 'meanMomentary',
     p90: 'p90Level',
     gatedMean: 'gatedMeanLevel',
+    lufs_mom: 'lufsMomentary',
+    lufs_int: 'lufsIntegrated',
     peak: 'peakDB'
   };
   const key = keyMap[gainSource] || 'momentaryLevel';
-  globalTarget = audioFiles.reduce((s, f) => s + f[key], 0) / audioFiles.length;
+
+  if (targetMode === 'custom') {
+    const customTarget = parseFloat(document.getElementById('customTargetInput').value);
+    if (isNaN(customTarget)) return;
+    globalTarget = customTarget;
+  } else {
+    globalTarget = audioFiles.reduce((s, f) => s + f[key], 0) / audioFiles.length;
+  }
+
   for (const f of audioFiles) f.gain = globalTarget - f[key];
   renderUI();
 }
@@ -573,6 +727,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('gateInput').addEventListener('change', e => {
     const v = parseInt(e.target.value);
     if (v >= -60 && v <= 0) { gateThresholdDB = v; if (audioFiles.length > 0) recompute(); }
+  });
+  document.getElementById('customTargetInput').addEventListener('change', () => {
+    if (targetMode === 'custom' && audioFiles.length > 0) recalcGains();
   });
 });
 
@@ -622,23 +779,32 @@ function measureLevel(audioBuffer, weightFn) {
 
   // Sliding rectangular window RMS
   const winSamp = Math.max(1, Math.round((windowMs / 1000) * sr));
-  const hopSamp = Math.max(1, Math.round(winSamp / 4));
+  const hopFine = Math.max(1, Math.round(0.025 * sr));  // 25ms hop for max/p90
+  const hopCoarse = Math.max(1, Math.round(winSamp / 4)); // 75% overlap for means
 
   const cumSq = new Float64Array(mLen + 1);
   for (let i = 0; i < mLen; i++) cumSq[i+1] = cumSq[i] + re[i] * re[i];
 
+  // Fine-grained pass for max momentary and p90
   let maxMom = -Infinity;
-  const levels = [];
-
-  for (let s = 0; s + winSamp <= mLen; s += hopSamp) {
+  const finelevels = [];
+  for (let s = 0; s + winSamp <= mLen; s += hopFine) {
     const ms = (cumSq[s + winSamp] - cumSq[s]) / winSamp;
     const lev = 20 * Math.log10(Math.max(Math.sqrt(ms), 1e-20));
-    levels.push(lev);
+    finelevels.push(lev);
     if (lev > maxMom) maxMom = lev;
   }
 
-  // 90th percentile
-  const sortedLevels = [...levels].sort((a,b) => a - b);
+  // Coarser pass for mean and gated mean
+  const levels = [];
+  for (let s = 0; s + winSamp <= mLen; s += hopCoarse) {
+    const ms = (cumSq[s + winSamp] - cumSq[s]) / winSamp;
+    const lev = 20 * Math.log10(Math.max(Math.sqrt(ms), 1e-20));
+    levels.push(lev);
+  }
+
+  // 90th percentile (from fine pass)
+  const sortedLevels = [...finelevels].sort((a,b) => a - b);
   const p90Level = sortedLevels.length > 0
     ? sortedLevels[Math.floor(sortedLevels.length * 0.9)]
     : -Infinity;
@@ -692,10 +858,112 @@ function fftInPlace(re, im, inv) {
 }
 
 // ============================================================
+// WAV HEADER PARSER — extract true sample count
+// Some browsers' decodeAudioData reads past the data chunk,
+// interpreting metadata (LIST, bext, iXML, _PMX) as audio.
+// We parse the WAV header ourselves to get the real data length,
+// then trim the AudioBuffer to match.
+// ============================================================
+function getWavDataInfo(arrayBuffer) {
+  try {
+    const view = new DataView(arrayBuffer);
+    const fourCC = (offset) => String.fromCharCode(
+      view.getUint8(offset), view.getUint8(offset + 1),
+      view.getUint8(offset + 2), view.getUint8(offset + 3)
+    );
+
+    if (arrayBuffer.byteLength < 44 || fourCC(0) !== 'RIFF' || fourCC(8) !== 'WAVE') return null;
+
+    let offset = 12;
+    let channels = null, bitsPerSample = null, sampleRate = null, dataBytes = null;
+
+    while (offset + 8 <= arrayBuffer.byteLength) {
+      const chunkId = fourCC(offset);
+      const chunkSize = view.getUint32(offset + 4, true);
+      const chunkData = offset + 8;
+
+      if (chunkId === 'fmt ' && chunkSize >= 16) {
+        channels = view.getUint16(chunkData + 2, true);
+        sampleRate = view.getUint32(chunkData + 4, true);
+        bitsPerSample = view.getUint16(chunkData + 14, true);
+      } else if (chunkId === 'data') {
+        dataBytes = chunkSize;
+        break;
+      }
+
+      offset += 8 + chunkSize + (chunkSize % 2);
+    }
+
+    if (!channels || !bitsPerSample || !sampleRate || !dataBytes) return null;
+    const bytesPerFrame = channels * (bitsPerSample / 8);
+    return { frames: Math.floor(dataBytes / bytesPerFrame), sampleRate, channels, bitsPerSample, dataBytes };
+  } catch (e) {
+    return null;
+  }
+}
+
+function trimAudioBuffer(audioBuffer, targetFrames, audioCtx) {
+  if (!targetFrames || targetFrames >= audioBuffer.length) return audioBuffer;
+  const trimmed = audioCtx.createBuffer(
+    audioBuffer.numberOfChannels, targetFrames, audioBuffer.sampleRate
+  );
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const src = audioBuffer.getChannelData(ch);
+    trimmed.getChannelData(ch).set(src.subarray(0, targetFrames));
+  }
+  return trimmed;
+}
+
+// ============================================================
 // FILE HANDLING
 // ============================================================
-async function handleFiles(fileList) {
+function isSupportedAudioFile(name) {
+  return /\.(wav|wave|flac|mp3|m4a|aac|ogg|opus|webm)$/i.test(name);
+}
+
+function safeOutputFileName(name) {
+  return name
+    .normalize('NFC')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .trim() || 'unnamed.wav';
+}
+
+async function chooseSourceFolder() {
+  if (!window.showDirectoryPicker) {
+    alert('Folder loading/saving needs Chrome or Edge because it uses the File System Access API. Use Load Files + ZIP fallback in this browser.');
+    return;
+  }
+
+  try {
+    sourceDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const files = [];
+
+    for await (const [name, handle] of sourceDirHandle.entries()) {
+      if (handle.kind === 'file' && isSupportedAudioFile(name)) {
+        const file = await handle.getFile();
+        files.push(file);
+      }
+    }
+
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    if (files.length === 0) {
+      alert('No supported audio files found in that folder.');
+      return;
+    }
+
+    await handleFiles(files, sourceDirHandle);
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      console.error(e);
+      alert('Could not open folder: ' + e.message);
+    }
+  }
+}
+
+async function handleFiles(fileList, dirHandle = null) {
   const ctx = getAudioContext();
+  sourceDirHandle = dirHandle;
   audioFiles = [];
 
   const dz = document.getElementById('dropZone');
@@ -703,6 +971,7 @@ async function handleFiles(fileList) {
     <p id="procStatus">Decoding…</p>
     <div class="progress-bar"><div class="fill" id="procFill" style="width:0%"></div></div>`;
 
+  let trimCount = 0;
   for (let i = 0; i < fileList.length; i++) {
     const el = document.getElementById('procStatus');
     const fl = document.getElementById('procFill');
@@ -710,9 +979,22 @@ async function handleFiles(fileList) {
     if (fl) fl.style.width = `${(i/fileList.length*50)}%`;
     try {
       const ab = await fileList[i].arrayBuffer();
-      const buf = await ctx.decodeAudioData(ab.slice(0));
+      const wavInfo = getWavDataInfo(ab);
+      let buf = await ctx.decodeAudioData(ab.slice(0));
+      if (wavInfo && wavInfo.frames && wavInfo.sampleRate) {
+        const decodedExpectedFrames = Math.round(wavInfo.frames * buf.sampleRate / wavInfo.sampleRate);
+        if (buf.length > decodedExpectedFrames) {
+          console.warn(`${fileList[i].name}: trimming ${buf.length} → ${decodedExpectedFrames} decoded frames (${wavInfo.frames} source frames; browser decoded bytes past data chunk)`);
+          buf = trimAudioBuffer(buf, decodedExpectedFrames, ctx);
+          trimCount++;
+        }
+      }
       audioFiles.push({ name: fileList[i].name, buffer: buf });
     } catch(e) { console.warn(`Skip ${fileList[i].name}:`, e); }
+  }
+
+  if (trimCount > 0) {
+    console.log(`Trimmed ${trimCount} file(s) to remove metadata decoded as audio.`);
   }
 
   windowMs = parseInt(document.getElementById('windowInput').value) || 400;
@@ -741,6 +1023,11 @@ function recompute() {
     f.gatedMeanLevel = r.gatedMeanLevel;
     f.peakDB = r.peakDB;
     f.duration = r.duration;
+    const lufs = measureLUFS(f.buffer);
+    f.lufsMomentary = lufs.momentary;
+    f.lufsShortTerm = lufs.shortTerm;
+    f.lufsIntegrated = lufs.integrated;
+    f.truePeakDB = lufs.truePeakDB;
   }
 
   recalcGains();
@@ -754,17 +1041,19 @@ function renderUI() {
   const unit = unitMap[currentWeighting];
   const colorMap = {A:'var(--human-orange)', MAF:'var(--accent)', Kea:'var(--kea-green)'};
   const colorVar = colorMap[currentWeighting];
-  const srcLabels = {momentary:'Momentary', p90:'P90', gatedMean:'Gated Mean', mean:'Mean', peak:'Peak'};
+  const srcLabels = {momentary:'Momentary', p90:'P90', gatedMean:'Gated Mean', mean:'Mean', lufs_mom:'LUFS Mom', lufs_int:'LUFS Int', peak:'Peak'};
   const srcLabel = srcLabels[gainSource];
 
-  document.getElementById('targetDisplay').textContent = `${globalTarget.toFixed(1)} ${unit}`;
+  const targetUnit = gainSource.startsWith('lufs') ? 'LUFS' : unit;
+  const targetLabel = targetMode === 'custom' ? `${globalTarget.toFixed(1)} ${targetUnit} (custom)` : `${globalTarget.toFixed(1)} ${targetUnit}`;
+  document.getElementById('targetDisplay').textContent = targetLabel;
   document.getElementById('targetDisplay').style.color = colorVar;
   document.getElementById('exportBtn').style.display = 'inline-block';
   document.getElementById('applyBtn').style.display = 'inline-block';
   document.getElementById('applyZipBtn').style.display = 'inline-block';
 
   const sorted = [...audioFiles].sort((a,b) => a.name.localeCompare(b.name));
-  const keyMap = {momentary:'momentaryLevel', p90:'p90Level', gatedMean:'gatedMeanLevel', mean:'meanMomentary', peak:'peakDB'};
+  const keyMap = {momentary:'momentaryLevel', p90:'p90Level', gatedMean:'gatedMeanLevel', mean:'meanMomentary', lufs_mom:'lufsMomentary', lufs_int:'lufsIntegrated', peak:'peakDB'};
   const srcKey = keyMap[gainSource];
   const vals = sorted.map(f => f[srcKey]);
   const gains = sorted.map(f => f.gain);
@@ -799,9 +1088,9 @@ function renderUI() {
 
   document.getElementById('mainLayout').innerHTML = `
     <div class="results-panel">
-      <div class="file-header" style="grid-template-columns: 26px 1fr 44px 56px 56px 56px 56px 56px 56px;">
+      <div class="file-header" style="grid-template-columns: 26px 1fr 44px 52px 52px 52px 52px 52px 52px 52px 52px 52px 52px;">
         <span>#</span><span>File</span><span>Len</span>
-        <span>Mom</span><span>P90</span><span>G.Mean</span><span>Mean</span><span>Peak</span><span>Gain</span>
+        <span>Mom</span><span>P90</span><span>G.Mean</span><span>Mean</span><span>LU.M</span><span>LU.ST</span><span>LU.I</span><span>Peak</span><span>TPk</span><span>Gain</span>
       </div>
       <div class="file-list" id="fileList"></div>
     </div>
@@ -809,11 +1098,12 @@ function renderUI() {
       <div class="section-title">Summary</div>
       <div class="summary-box">
         <div class="summary-row"><span class="label">Files</span><span class="value">${sorted.length}</span></div>
+        <div class="summary-row"><span class="label">Source</span><span class="value" style="color:${sourceDirHandle?'var(--kea-green)':'var(--text-dim)'}">${sourceDirHandle?'Folder':'File picker'}</span></div>
         <div class="summary-row"><span class="label">Weighting</span><span class="value" style="color:${colorVar}">${{A:'A (Human)',MAF:'MAF (Terhardt)',Kea:'Kea'}[currentWeighting]}</span></div>
         <div class="summary-row"><span class="label">Window</span><span class="value">${windowMs} ms</span></div>
         <div class="summary-row"><span class="label">Gate</span><span class="value">${gateThresholdDB} dB re max</span></div>
         <div class="summary-row"><span class="label">Gain from</span><span class="value" style="color:var(--accent)">${srcLabel}</span></div>
-        <div class="summary-row"><span class="label">Target (mean)</span><span class="value" style="color:${colorVar}">${globalTarget.toFixed(1)} ${unit}</span></div>
+        <div class="summary-row"><span class="label">Target (${targetMode === 'custom' ? 'custom' : 'mean'})</span><span class="value" style="color:${colorVar}">${globalTarget.toFixed(1)} ${targetUnit}</span></div>
         <div class="summary-row"><span class="label">±1s Pad</span><span class="value" style="color:${padSilence?'var(--gold)':'var(--text-dim)'}">${padSilence?'ON':'OFF'}</span></div>
         <div class="summary-row"><span class="label">Spread</span><span class="value">${spread.toFixed(1)} dB</span></div>
         <div class="summary-row"><span class="label">Max |Gain|</span><span class="value">${maxG.toFixed(1)} dB</span></div>
@@ -834,11 +1124,15 @@ function renderUI() {
       <div class="section-title">Metrics</div>
       <div class="info-text">
         <strong>Mom</strong> = max RMS of all ${windowMs} ms windows.<br>
-        <strong>P90</strong> = 90th percentile of window levels (robust to transients).<br>
+        <strong>P90</strong> = 90th percentile of window levels.<br>
         <strong>G.Mean</strong> = energy-mean of windows above gate (${gateThresholdDB} dB re max).<br>
         <strong>Mean</strong> = energy-mean of all windows (ungated).<br>
+        <strong>LU.M</strong> = LUFS momentary — max of 400ms K-weighted blocks (BS.1770). Best for single words.<br>
+        <strong>LU.ST</strong> = LUFS short-term max — max of 3s K-weighted blocks.<br>
+        <strong>LU.I</strong> = LUFS integrated — K-weighted gated mean (BS.1770-style). Best for longer speech.<br>
         <strong>Peak</strong> = sample peak (unweighted, dBFS).<br>
-        The column driving gain is highlighted. All weighted metrics use ${unit}.
+        <strong>TPk</strong> = 4x interpolated true-peak estimate.<br>
+        The column driving gain is highlighted. Mom/P90/G.Mean/Mean use the selected weighting; LU.M and LU.I always use K-weighting; Peak is unweighted.
       </div>
       <div id="applyStatus"></div>
     </div>
@@ -848,7 +1142,7 @@ function renderUI() {
   sorted.forEach((f, i) => {
     const row = document.createElement('div');
     row.className = 'file-row';
-    row.style.gridTemplateColumns = '26px 1fr 44px 56px 56px 56px 56px 56px 56px';
+    row.style.gridTemplateColumns = '26px 1fr 44px 52px 52px 52px 52px 52px 52px 52px 52px';
     const gs = f.gain >= 0 ? '+' : '';
     const gc = Math.abs(f.gain) > 3 ? 'var(--gold)' : 'var(--text-dim)';
     const cls = k => gainSource === k ? 'src' : 'nosrc';
@@ -860,7 +1154,11 @@ function renderUI() {
       <span class="metric ${cls('p90')}">${f.p90Level.toFixed(1)}</span>
       <span class="metric ${cls('gatedMean')}">${f.gatedMeanLevel.toFixed(1)}</span>
       <span class="metric ${cls('mean')}">${f.meanMomentary.toFixed(1)}</span>
+      <span class="metric ${cls('lufs_mom')}">${f.lufsMomentary.toFixed(1)}</span>
+      <span class="metric nosrc">${f.lufsShortTerm.toFixed(1)}</span>
+      <span class="metric ${cls('lufs_int')}">${f.lufsIntegrated.toFixed(1)}</span>
       <span class="metric ${cls('peak')}">${f.peakDB.toFixed(1)}</span>
+      <span class="metric dim">${f.truePeakDB.toFixed(1)}</span>
       <span class="metric gain-col" style="color:${gc}">${gs}${f.gain.toFixed(1)}</span>
     `;
     listEl.appendChild(row);
@@ -931,11 +1229,11 @@ function drawCurves() {
 function buildCSV() {
   const unitMap = {A:'dB(A)', MAF:'dB(MAF)', Kea:'dB(Kea)'};
   const unit = unitMap[currentWeighting];
-  const srcLabels = {momentary:'Momentary',p90:'P90',gatedMean:'GatedMean',mean:'Mean',peak:'Peak'};
+  const srcLabels = {momentary:'Momentary',p90:'P90',gatedMean:'GatedMean',mean:'Mean',lufs_mom:'LUFS_Mom',lufs_int:'LUFS_Int',peak:'Peak'};
   const src = srcLabels[gainSource];
-  let csv = `File,Duration_s,Momentary_${unit},P90_${unit},GatedMean_${unit},Mean_${unit},Peak_dBFS,GainFrom,Gain_dB,Target_${unit},Gate_dB\n`;
+  let csv = `File,Duration_s,Momentary_${unit},P90_${unit},GatedMean_${unit},Mean_${unit},LUFS_Mom,LUFS_ShortTerm,LUFS_Int,Peak_dBFS,TruePeak_dBTP,GainFrom,Gain_dB,Target,Gate_dB\n`;
   [...audioFiles].sort((a,b)=>a.name.localeCompare(b.name)).forEach(f=>{
-    csv += `"${f.name}",${f.duration.toFixed(3)},${f.momentaryLevel.toFixed(2)},${f.p90Level.toFixed(2)},${f.gatedMeanLevel.toFixed(2)},${f.meanMomentary.toFixed(2)},${f.peakDB.toFixed(2)},${src},${f.gain.toFixed(2)},${globalTarget.toFixed(2)},${gateThresholdDB}\n`;
+    csv += `"${f.name}",${f.duration.toFixed(3)},${f.momentaryLevel.toFixed(2)},${f.p90Level.toFixed(2)},${f.gatedMeanLevel.toFixed(2)},${f.meanMomentary.toFixed(2)},${f.lufsMomentary.toFixed(2)},${f.lufsShortTerm.toFixed(2)},${f.lufsIntegrated.toFixed(2)},${f.peakDB.toFixed(2)},${f.truePeakDB.toFixed(2)},${src},${f.gain.toFixed(2)},${globalTarget.toFixed(2)},${gateThresholdDB}\n`;
   });
   return csv;
 }
@@ -943,12 +1241,12 @@ function buildCSV() {
 function buildTSV() {
   const unitMap = {A:'dB(A)', MAF:'dB(MAF)', Kea:'dB(Kea)'};
   const unit = unitMap[currentWeighting];
-  const srcLabels = {momentary:'Momentary',p90:'P90',gatedMean:'GatedMean',mean:'Mean',peak:'Peak'};
+  const srcLabels = {momentary:'Momentary',p90:'P90',gatedMean:'GatedMean',mean:'Mean',lufs_mom:'LUFS_Mom',lufs_int:'LUFS_Int',peak:'Peak'};
   const src = srcLabels[gainSource];
   const t = '\t';
-  let tsv = `File${t}Duration_s${t}Momentary_${unit}${t}P90_${unit}${t}GatedMean_${unit}${t}Mean_${unit}${t}Peak_dBFS${t}GainFrom${t}Gain_dB${t}Target_${unit}${t}Gate_dB\n`;
+  let tsv = `File${t}Duration_s${t}Momentary_${unit}${t}P90_${unit}${t}GatedMean_${unit}${t}Mean_${unit}${t}LUFS_Mom${t}LUFS_ShortTerm${t}LUFS_Int${t}Peak_dBFS${t}TruePeak_dBTP${t}GainFrom${t}Gain_dB${t}Target${t}Gate_dB\n`;
   [...audioFiles].sort((a,b)=>a.name.localeCompare(b.name)).forEach(f=>{
-    tsv += `${f.name}${t}${f.duration.toFixed(3)}${t}${f.momentaryLevel.toFixed(2)}${t}${f.p90Level.toFixed(2)}${t}${f.gatedMeanLevel.toFixed(2)}${t}${f.meanMomentary.toFixed(2)}${t}${f.peakDB.toFixed(2)}${t}${src}${t}${f.gain.toFixed(2)}${t}${globalTarget.toFixed(2)}${t}${gateThresholdDB}\n`;
+    tsv += `${f.name}${t}${f.duration.toFixed(3)}${t}${f.momentaryLevel.toFixed(2)}${t}${f.p90Level.toFixed(2)}${t}${f.gatedMeanLevel.toFixed(2)}${t}${f.meanMomentary.toFixed(2)}${t}${f.lufsMomentary.toFixed(2)}${t}${f.lufsShortTerm.toFixed(2)}${t}${f.lufsIntegrated.toFixed(2)}${t}${f.peakDB.toFixed(2)}${t}${f.truePeakDB.toFixed(2)}${t}${src}${t}${f.gain.toFixed(2)}${t}${globalTarget.toFixed(2)}${t}${gateThresholdDB}\n`;
   });
   return tsv;
 }
@@ -978,12 +1276,27 @@ async function applyGains(useZip) {
   const statusEl = document.getElementById('applyStatus');
   if (!statusEl) return;
 
-  const mode = useZip ? 'ZIP' : 'individual WAVs';
+  if (!useZip && !sourceDirHandle) {
+    if (!window.showDirectoryPicker) {
+      alert('Direct folder saving needs Chrome or Edge. Use Save ZIP as a fallback.');
+      return;
+    }
+    try {
+      sourceDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (e) {
+      if (e.name !== 'AbortError') alert('Could not choose folder: ' + e.message);
+      return;
+    }
+  }
+
+  const mode = useZip ? 'ZIP' : 'folder WAVs';
   statusEl.innerHTML = `<div class="apply-progress">Preparing ${mode}… 0/${audioFiles.length}</div>`;
   await new Promise(r=>setTimeout(r,50));
 
   const zip = useZip ? new JSZip() : null;
   let clipCount = 0;
+  let savedCount = 0;
+  const manifestRows = [];
 
   for (let i = 0; i < audioFiles.length; i++) {
     const f = audioFiles[i];
@@ -1012,26 +1325,41 @@ async function applyGains(useZip) {
 
     const wavBlob = encodeWav(channels, sr);
 
-    let outName = f.name.replace(/\.[^.]+$/, '');
-    const gs = f.gain >= 0 ? '+' : '';
-    outName += `_${gs}${f.gain.toFixed(1)}dB`;
-    if (clipped) outName += '_CLIPPED';
-    outName += '.wav';
+const base = f.name.replace(/\.[^.]+$/, '');
+const gs = f.gain >= 0 ? '+' : '';
+let outName = `${base}_${gs}${f.gain.toFixed(1)}dB.wav`;
+
+if (clipped) {
+  outName = `${base}_${gs}${f.gain.toFixed(1)}dB_CLIPPED.wav`;
+}
+    outName = safeOutputFileName(outName);
+
+    manifestRows.push({
+      source: f.name,
+      output: outName,
+      gain: f.gain,
+      clipped,
+      gainSource,
+      target: globalTarget
+    });
 
     if (useZip) {
       zip.file(outName, wavBlob);
     } else {
-      const url = URL.createObjectURL(wavBlob);
-      const a = document.createElement('a');
-      a.href = url; a.download = outName; a.click();
-      URL.revokeObjectURL(url);
-      await new Promise(r=>setTimeout(r,300));
+      const fileHandle = await sourceDirHandle.getFileHandle(outName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(wavBlob);
+      await writable.close();
+      savedCount++;
     }
   }
 
+  const csv = buildCSV();
+  const manifest = buildSaveManifest(manifestRows);
+
   if (useZip) {
-    const csv = buildCSV();
     zip.file(`levels_${currentWeighting}_${gainSource}.csv`, csv);
+    zip.file(`save_manifest_${currentWeighting}_${gainSource}.tsv`, manifest);
 
     statusEl.innerHTML = `<div class="apply-progress">Compressing ZIP…</div>`;
     await new Promise(r=>setTimeout(r,10));
@@ -1046,13 +1374,32 @@ async function applyGains(useZip) {
     a.download = `kea_normalized_${currentWeighting}_${gainSource}.zip`;
     a.click();
     URL.revokeObjectURL(url);
+  } else {
+    const csvHandle = await sourceDirHandle.getFileHandle(`levels_${currentWeighting}_${gainSource}.csv`, { create: true });
+    const csvWritable = await csvHandle.createWritable();
+    await csvWritable.write(new Blob([csv], { type: 'text/csv' }));
+    await csvWritable.close();
+
+    const manifestHandle = await sourceDirHandle.getFileHandle(`save_manifest_${currentWeighting}_${gainSource}.tsv`, { create: true });
+    const manifestWritable = await manifestHandle.createWritable();
+    await manifestWritable.write(new Blob([manifest], { type: 'text/tab-separated-values' }));
+    await manifestWritable.close();
   }
 
   let doneMsg = useZip
-    ? `Done — ${audioFiles.length} WAVs + CSV in ZIP.`
-    : `Done — ${audioFiles.length} WAVs downloaded individually.`;
+    ? `Done — ${audioFiles.length} WAVs + CSV + manifest in ZIP.`
+    : `Done — ${savedCount} WAVs + CSV + manifest saved directly to the selected folder.`;
   if (clipCount > 0) doneMsg += ` ${clipCount} clipped.`;
   statusEl.innerHTML = `<div class="apply-progress" style="border-color:var(--kea-green);color:var(--kea-green);">${doneMsg}</div>`;
+}
+
+function buildSaveManifest(rows) {
+  const t = '\t';
+  let out = `Source${t}Output${t}Gain_dB${t}GainFrom${t}Target${t}Clipped\n`;
+  for (const r of rows) {
+    out += `${r.source}${t}${r.output}${t}${r.gain.toFixed(2)}${t}${r.gainSource}${t}${r.target.toFixed(2)}${t}${r.clipped ? 'yes' : 'no'}\n`;
+  }
+  return out;
 }
 
 function encodeWav(channels, sr) {
