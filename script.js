@@ -1,7 +1,7 @@
-console.log("UC Kea Sound Player – script.js v2.1");
+console.log("UC Kea Sound Player – script.js v2.2");
 
 // Bump this when you update correction_factors.csv or sound files
-const APP_VERSION = "2.1";
+const APP_VERSION = "2.2";
 
 // ── State ──────────────────────────────────────────────
 let currentMode = "dBA";          // "dBA" or "dBKea"
