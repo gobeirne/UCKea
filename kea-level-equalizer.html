@@ -685,6 +685,9 @@ function setTargetMode(mode) {
   document.querySelectorAll('#targetToggle button').forEach(b =>
     b.classList.toggle('active', b.dataset.tgt === mode));
   document.getElementById('customTargetGroup').style.display = mode === 'custom' ? 'flex' : 'none';
+  if (mode === 'custom' && globalTarget !== null) {
+    document.getElementById('customTargetInput').value = globalTarget.toFixed(1);
+  }
   if (audioFiles.length > 0) recalcGains();
 }
 
